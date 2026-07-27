@@ -275,18 +275,18 @@ function updateGraphs() {
 
 async function updateAnimeRelations() {
   let resp = await fetch('/anime-relations/date');
-  const serverOutdated = document.getElementById('anime-relations-server-outdated');
+  const cacheOutdated = document.getElementById('anime-relations-cache-outdated');
   const createDate = document.getElementById('anime-relations-create-date');
   const localDate = document.getElementById('anime-relations-local-date');
   localDate.textContent = localStorage.getItem('anime_relations_last_modified') ?? '1970-01-01';
   createDate.textContent = '1970-01-01';
-  serverOutdated.textContent = 'Unknown';
+  cacheOutdated.textContent = 'Unknown';
 
   if(resp.status === 200) {
     let data = await resp.json();
     createDate.textContent = formatRelative(Math.floor(Date.parse(data.created_at) / 1000));
     createDate.setAttribute('title', data.created_at);
-    serverOutdated.textContent = localStorage.getItem('anime_relations_hash') === data.hash ? 'No' : 'Yes';
+    cacheOutdated.textContent = localStorage.getItem('anime_relations_hash') === data.hash ? 'No' : 'Yes';
   }
 }
 
