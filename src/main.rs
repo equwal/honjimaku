@@ -287,7 +287,14 @@ fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
 
 fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: PathBuf) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
-    let path = path.join("jimaku_backup.zip");
+    let date = time::UtcDateTime::now().date();
+    let filename = format!(
+        "jimaku_backup [{}-{:02}-{:02}].zip",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    );
+    let path = path.join(filename);
     let file = std::fs::File::create(&path).context("could not create .zip file")?;
     let writer = std::io::BufWriter::new(file);
     let mut zip = rawzip::ZipArchiveWriter::new(writer);
