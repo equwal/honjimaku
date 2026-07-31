@@ -2,8 +2,9 @@ use std::{convert::Infallible, io::Write, net::SocketAddr, path::PathBuf, str::F
 
 use anyhow::Context;
 use axum::{
+    Extension, ServiceExt,
     extract::{DefaultBodyLimit, Request},
-    middleware, Extension, ServiceExt,
+    middleware,
 };
 use futures_util::StreamExt;
 use hyper::body::Incoming;
@@ -11,7 +12,7 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls_acme::AcmeConfig;
 use rustls_acme::{caches::DirCache, is_tls_alpn_challenge};
 use tokio_rustls::LazyConfigAcceptor;
-use tower::{limit::GlobalConcurrencyLimitLayer, Layer, Service, ServiceExt as _};
+use tower::{Layer, Service, ServiceExt as _, limit::GlobalConcurrencyLimitLayer};
 use tower_http::{
     compression::CompressionLayer,
     normalize_path::NormalizePathLayer,
@@ -21,11 +22,11 @@ use tower_http::{
 use tracing::{error, info};
 use tracing_appender::{non_blocking::WorkerGuard, rolling::Rotation};
 use tracing_subscriber::{
+    Layer as _,
     filter::{LevelFilter, Targets},
     fmt::format::FmtSpan,
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    Layer as _,
 };
 
 fn unwrap_infallible<T>(result: Result<T, Infallible>) -> T {
@@ -136,7 +137,10 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
         .layer(DefaultBodyLimit::max(jimaku::MAX_BODY_SIZE))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(jimaku::MAX_BODY_SIZE))
         .layer(CompressionLayer::new())
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            hyper::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ))
         .layer(GlobalConcurrencyLimitLayer::new(512))
         .with_state(state);
 

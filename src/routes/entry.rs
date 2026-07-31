@@ -1,15 +1,15 @@
 use crate::anilist::{self, MediaTitle};
-use crate::database::{is_unique_constraint_violation, Table};
-use crate::download::{validate_path, DownloadResponse};
+use crate::database::{Table, is_unique_constraint_violation};
+use crate::download::{DownloadResponse, validate_path};
 use crate::error::{ApiError, ApiErrorCode, InternalError};
 use crate::flash::{FlashMessage, Flasher, Flashes};
 use crate::headers::Referrer;
 use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Report, ReportPayload};
 use crate::ratelimit::RateLimit;
-use crate::utils::{is_over_length, HtmlPage, FRAGMENT};
+use crate::utils::{FRAGMENT, HtmlPage, is_over_length};
+use crate::{AppState, tmdb};
 use crate::{audit, filters};
-use crate::{tmdb, AppState};
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use askama::Template;
 use axum::body::{Body, Bytes};
 use axum::extract::multipart::Field;
@@ -19,9 +19,9 @@ use axum::http::{HeaderName, HeaderValue};
 use axum::response::Redirect;
 use axum::routing::{delete, get, post, put};
 use axum::{
+    Router,
     extract::{Form, Path, Request, State},
     response::{IntoResponse, Response},
-    Router,
 };
 use percent_encoding::percent_encode;
 use rusqlite::OptionalExtension;
@@ -322,7 +322,7 @@ pub async fn raw_create_directory_entry(
                     (entry_id, path)
                 }
                 Err(e) if is_unique_constraint_violation(&e) => {
-                    return Err(ApiError::new("Entry already exists.").with_code(ApiErrorCode::EntryAlreadyExists))
+                    return Err(ApiError::new("Entry already exists.").with_code(ApiErrorCode::EntryAlreadyExists));
                 }
                 Err(e) => return Err(e.into()),
             };
@@ -1242,7 +1242,7 @@ async fn bulk_download(
 
     let filename = sanitise_file_name::sanitise(&format!("{}.zip", &entry.name));
     let buffer = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
-        let options = zip::write::FileOptions::default();
+        let options = zip::write::SimpleFileOptions::default();
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
 
         for file in payload.files {

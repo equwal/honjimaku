@@ -292,7 +292,7 @@ async fn login_form(
 }
 
 #[derive(Template)]
-#[template(path = "account.html")]
+#[template(path = "account.html", print = "code")]
 struct AccountInfoTemplate {
     account: Option<Account>,
     user: Account,

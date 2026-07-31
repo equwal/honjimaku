@@ -5,7 +5,7 @@ jimaku is a simple site dedicated to hosting Japanese subtitles of anime or othe
 
 # Install
 
-Right now, Rust v1.74 or higher is required. To install just run `cargo build`.
+Right now, Rust v1.92 or higher is required. To install just run `cargo build`.
 
 In order to actually run the server the `static` directory needs to be next to the executable. Maybe in the future there'll be a way to automatically move it.
 
