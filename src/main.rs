@@ -348,7 +348,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
 
             let (mut entry, config) = zip
                 .new_file(name.as_str())
-                .compression_method(rawzip::CompressionMethod::Zstd)
+                .compression_method(rawzip::CompressionMethod::ZSTD)
                 .unix_permissions(0o644)
                 .start()?;
 
@@ -369,7 +369,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
     let json = serde_json::to_string(&entries).context("could not convert entries to JSON")?;
     let (mut entry, config) = zip
         .new_file("entries.json")
-        .compression_method(rawzip::CompressionMethod::Zstd)
+        .compression_method(rawzip::CompressionMethod::ZSTD)
         .unix_permissions(0o644)
         .start()?;
 
