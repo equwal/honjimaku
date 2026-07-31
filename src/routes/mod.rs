@@ -9,14 +9,14 @@ use crate::{
 };
 use askama::Template;
 use axum::{
+    Extension, Router,
     extract::{Path, Query, State},
     response::{IntoResponse, Redirect},
     routing::get,
-    Extension, Router,
 };
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 
-use crate::{models::DirectoryEntry, AppState};
+use crate::{AppState, models::DirectoryEntry};
 
 mod admin;
 mod api;
@@ -28,7 +28,7 @@ mod opensearch;
 mod relations;
 mod report;
 
-pub use api::{copy_api_token, ApiToken, SearchQuery};
+pub use api::{ApiToken, SearchQuery, copy_api_token};
 pub(crate) use report::RichReport;
 
 #[derive(Template)]

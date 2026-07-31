@@ -3,17 +3,17 @@ use std::convert::Infallible;
 use axum::{
     extract::{FromRequestParts, OptionalFromRequestParts},
     http::{
+        Extensions, HeaderValue, StatusCode,
         header::{LOCATION, SET_COOKIE},
         request::Parts,
-        Extensions, HeaderValue, StatusCode,
     },
     response::{IntoResponse, IntoResponseParts, Response},
 };
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use cookie::Cookie;
 use hmac::Mac;
 
-use crate::{key::SecretKey, models::Account, AppState};
+use crate::{AppState, key::SecretKey, models::Account};
 
 /// Maximum expiry date of the session cookie.
 ///

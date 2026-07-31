@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use serde::{de::Visitor, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Visitor};
 
 pub struct MaybeBorrowedString<'a>(pub Cow<'a, str>);
 

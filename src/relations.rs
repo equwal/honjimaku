@@ -156,15 +156,15 @@ type Relation = Vec<Rule>;
 
 fn find_destination(rules: &[Rule], episode: u16) -> Option<(u32, u16)> {
     for rule in rules {
-        if let Some(distance) = episode.checked_sub(rule.source.begin()) {
-            if rule.source.end().checked_sub(episode).is_some() {
-                let mut found = rule.destination.begin();
-                if !rule.destination.is_number() {
-                    found = found.saturating_add(distance);
-                }
-                if found <= rule.destination.end() {
-                    return Some((rule.id, found));
-                }
+        if let Some(distance) = episode.checked_sub(rule.source.begin())
+            && rule.source.end().checked_sub(episode).is_some()
+        {
+            let mut found = rule.destination.begin();
+            if !rule.destination.is_number() {
+                found = found.saturating_add(distance);
+            }
+            if found <= rule.destination.end() {
+                return Some((rule.id, found));
             }
         }
     }

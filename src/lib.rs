@@ -31,9 +31,9 @@ pub mod trash;
 pub mod utils;
 
 pub use cli::{Command, PROGRAM_NAME};
-pub use config::{Config, CONFIG};
+pub use config::{CONFIG, Config};
 pub use database::Database;
-pub use routes::{copy_api_token, ApiToken};
+pub use routes::{ApiToken, copy_api_token};
 pub use state::AppState;
 pub use utils::MAX_BODY_SIZE;
 pub use utils::MAX_UPLOAD_SIZE;

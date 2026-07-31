@@ -4,14 +4,15 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
+    AppState,
     anilist::MediaTitle,
     error::{ApiError, ApiErrorCode},
     models::{DirectoryEntry, EntryFlags},
     relations::{Range as RelationRange, Relations},
     routes::entry::{
-        get_file_entries, raw_create_directory_entry, raw_upload_file, FileEntry, PendingDirectoryEntry, UploadResult,
+        FileEntry, PendingDirectoryEntry, UploadResult, get_file_entries, raw_create_directory_entry, raw_upload_file,
     },
-    tmdb, AppState,
+    tmdb,
 };
 
 use super::{
@@ -212,16 +213,16 @@ impl SearchQuery {
         }
 
         let ts = entry.last_updated_at.unix_timestamp();
-        if let Some(after) = self.after {
-            if ts < after {
-                return None;
-            }
+        if let Some(after) = self.after
+            && ts < after
+        {
+            return None;
         }
 
-        if let Some(before) = self.before {
-            if ts > before {
-                return None;
-            }
+        if let Some(before) = self.before
+            && ts > before
+        {
+            return None;
         }
 
         if let Some(m) = self.get_best_fuzzy_score(entry) {

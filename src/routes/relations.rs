@@ -1,11 +1,11 @@
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, post},
-    Json, Router,
 };
 use serde::Serialize;
 
-use crate::{error::ApiError, models::Account, relations::Relations, AppState};
+use crate::{AppState, error::ApiError, models::Account, relations::Relations};
 
 async fn get_anime_relations(State(state): State<AppState>) -> Json<Relations> {
     Json(state.anime_relations().await.clone())

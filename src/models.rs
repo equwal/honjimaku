@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
 use rusqlite::{
-    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
     ToSql,
+    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;

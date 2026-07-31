@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
-use crate::{anilist::MediaTitle, models::EntryFlags, tmdb, AppState};
+use crate::{AppState, anilist::MediaTitle, models::EntryFlags, tmdb};
 
 /// A fixture that represents a directory entry that is pending addition to the database.
 #[derive(Debug, Clone, Serialize, Deserialize)]

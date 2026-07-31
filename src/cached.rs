@@ -11,8 +11,8 @@ use std::{
 use axum::{
     body::Body,
     http::{
-        header::{CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE},
         HeaderValue, StatusCode,
+        header::{CACHE_CONTROL, CONTENT_ENCODING, CONTENT_TYPE},
     },
     response::{IntoResponse, Response},
 };
@@ -42,11 +42,7 @@ impl<T> TimedCachedValue<T> {
         let guard = self.value.read().await;
         RwLockReadGuard::try_map(guard, |f| {
             if let Some((value, exp)) = f {
-                if exp.elapsed() >= self.ttl {
-                    None
-                } else {
-                    Some(value)
-                }
+                if exp.elapsed() >= self.ttl { None } else { Some(value) }
             } else {
                 None
             }

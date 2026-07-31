@@ -1,11 +1,11 @@
 use axum::{
     extract::{FromRequestParts, Request, State},
-    http::{header::AUTHORIZATION, request::Parts, HeaderMap},
+    http::{HeaderMap, header::AUTHORIZATION, request::Parts},
     middleware::Next,
     response::Response,
 };
 
-use crate::{error::ApiError, AppState};
+use crate::{AppState, error::ApiError};
 
 /// An API token
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

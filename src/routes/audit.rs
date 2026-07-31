@@ -2,21 +2,21 @@ use std::collections::HashMap;
 
 use askama::Template;
 use axum::{
+    Json, Router,
     extract::{Query, State},
     response::Redirect,
     routing::get,
-    Json, Router,
 };
 use rusqlite::types::Value;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    AppState,
     audit::{AuditLogData, AuditLogEntry},
     database::Table,
     error::ApiError,
     models::{Account, DirectoryEntry},
     utils::HtmlPage,
-    AppState,
 };
 
 #[derive(Debug, Serialize)]
@@ -137,10 +137,10 @@ async fn get_audit_logs(
     // Check what requires backfilling
     let mut backfilled_ids = Vec::new();
     for entry in result.logs.iter() {
-        if let AuditLogData::MoveEntry(s) = &entry.data {
-            if !result.entries.contains_key(&s.entry_id) {
-                backfilled_ids.push(s.entry_id);
-            }
+        if let AuditLogData::MoveEntry(s) = &entry.data
+            && !result.entries.contains_key(&s.entry_id)
+        {
+            backfilled_ids.push(s.entry_id);
         }
     }
 
@@ -175,12 +175,11 @@ async fn get_audit_logs(
     // These are backfilled user IDs
     let mut backfilled_ids = Vec::new();
     for entry in result.logs.iter() {
-        if let AuditLogData::ResolveReport(s) = &entry.data {
-            if let Some(reporter_id) = s.reporter_id {
-                if !result.users.contains_key(&reporter_id) {
-                    backfilled_ids.push(Value::Integer(reporter_id));
-                }
-            }
+        if let AuditLogData::ResolveReport(s) = &entry.data
+            && let Some(reporter_id) = s.reporter_id
+            && !result.users.contains_key(&reporter_id)
+        {
+            backfilled_ids.push(Value::Integer(reporter_id));
         }
     }
 

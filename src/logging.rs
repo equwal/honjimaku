@@ -12,7 +12,7 @@ use axum::{extract::Request, response::Response};
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
-use tracing::{event, Level};
+use tracing::{Level, event};
 
 use crate::{
     token::get_token_from_request,
@@ -162,10 +162,10 @@ impl RequestLogger {
                 }
             }
 
-            if !buffer.is_empty() {
-                if let Err(e) = bulk_insert_request_logs(&mut connection, buffer.drain(..)) {
-                    tracing::error!(error = %e, "error when bulk inserting request logs");
-                }
+            if !buffer.is_empty()
+                && let Err(e) = bulk_insert_request_logs(&mut connection, buffer.drain(..))
+            {
+                tracing::error!(error = %e, "error when bulk inserting request logs");
             }
         });
 
@@ -216,12 +216,12 @@ impl RequestLogger {
         let query = query.into();
         self.call(move |conn| -> rusqlite::Result<Vec<RequestLogEntry>> {
             let mut stmt = conn.prepare_cached(query.as_ref())?;
-            let result = match stmt.query_map(params, RequestLogEntry::from_row) {
+
+            match stmt.query_map(params, RequestLogEntry::from_row) {
                 Ok(value) => value.collect(),
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Vec::new()),
                 Err(e) => Err(e),
-            };
-            result
+            }
         })
         .await
     }

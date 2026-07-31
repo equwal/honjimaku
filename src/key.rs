@@ -1,6 +1,6 @@
-use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, prelude::BASE64_URL_SAFE_NO_PAD};
 use hmac::{Hmac, KeyInit, Mac};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::Sha256;
 
 /// A newtype wrapper for a 32 byte secret key.

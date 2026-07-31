@@ -3,9 +3,9 @@ use std::convert::Infallible;
 use axum::{
     extract::FromRequestParts,
     http::{
+        HeaderValue, StatusCode, Uri,
         header::{ACCEPT_ENCODING, REFERER, USER_AGENT},
         request::Parts,
-        HeaderValue, StatusCode, Uri,
     },
 };
 

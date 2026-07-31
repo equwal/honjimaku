@@ -270,12 +270,12 @@ impl Database {
         let query = query.into();
         self.call(move |conn| -> rusqlite::Result<Vec<T>> {
             let mut stmt = conn.prepare_cached(query.as_ref())?;
-            let result = match stmt.query_map(params, T::from_row) {
+
+            match stmt.query_map(params, T::from_row) {
                 Ok(value) => value.collect(),
                 Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Vec::new()),
                 Err(e) => Err(e),
-            };
-            result
+            }
         })
         .await
     }
@@ -397,8 +397,7 @@ impl Worker {
                 if let Err(e) = f(&mut connection) {
                     trace!(
                         "database connection worker {} received an error ({}) during init",
-                        id,
-                        &e
+                        id, &e
                     );
                     let _ = result_sender.blocking_send(Err(e));
                     return;
@@ -438,13 +437,13 @@ impl Worker {
     }
 
     fn terminate(&mut self) {
-        if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                warn!(
-                    "connection pool worker {} has panicked while cleaning up, ignoring.",
-                    self.id
-                );
-            }
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            warn!(
+                "connection pool worker {} has panicked while cleaning up, ignoring.",
+                self.id
+            );
         }
     }
 
@@ -529,12 +528,12 @@ impl<'conn> Transaction<'conn> {
         P: rusqlite::Params,
     {
         let mut stmt = self.inner.prepare_cached(query)?;
-        let result = match stmt.query_map(params, T::from_row) {
+
+        match stmt.query_map(params, T::from_row) {
             Ok(value) => value.collect(),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(Vec::new()),
             Err(e) => Err(e),
-        };
-        result
+        }
     }
 }
 
@@ -552,10 +551,10 @@ pub fn directory() -> anyhow::Result<PathBuf> {
 
     let mut path = dirs::data_dir().context("could not find a data directory for the current user")?;
     path.push(crate::PROGRAM_NAME);
-    if let Err(e) = std::fs::create_dir(&path) {
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(e).context("could not create application local data directory");
-        }
+    if let Err(e) = std::fs::create_dir(&path)
+        && e.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(e).context("could not create application local data directory");
     }
     path.push("main.db");
     Ok(path)

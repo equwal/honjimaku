@@ -38,10 +38,10 @@ fn create_directory(path: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    if let Err(e) = std::fs::create_dir(path) {
-        if e.kind() != std::io::ErrorKind::AlreadyExists {
-            return Err(e).with_context(|| format!("could not create directory {}", path.display()));
-        }
+    if let Err(e) = std::fs::create_dir(path)
+        && e.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(e).with_context(|| format!("could not create directory {}", path.display()));
     }
     Ok(())
 }
