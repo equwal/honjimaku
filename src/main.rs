@@ -485,14 +485,13 @@ async fn run(command: jimaku::Command) -> anyhow::Result<()> {
             backup_to_zip(entries, path)
         }
         jimaku::Command::Upload { path } => {
-            match &state.config().buzzheavier {
-                Some(buzzheavier) => {
-                    let file = tokio::fs::File::open(path).await?;
-                    let url = buzzheavier.upload(&state.client, file).await?;
+            match &state.config().gofile {
+                Some(gofile) => {
+                    let url = gofile.upload(&state.client, path).await?;
                     println!("Uploaded backup file to {url}");
                     state.database().update_storage("backup_url", url).await?;
                 }
-                None => eprintln!("No account ID set up for buzzheavier to upload"),
+                None => eprintln!("No authentication token set up for Gofile to upload"),
             };
             Ok(())
         }
