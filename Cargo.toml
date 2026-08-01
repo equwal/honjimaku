@@ -53,6 +53,6 @@ tower-http = { version = "0.7", features = ["fs", "timeout", "normalize-path", "
 tracing = "0.1.40"
 tracing-appender = { git = "https://github.com/Rapptz/tracing-appender" }
 tracing-subscriber = { version = "0.3.18", features = ["json"] }
-utoipa = { version = "4.2.0", features = ["time", "axum_extras", "repr", "preserve_path_order"] }
+utoipa = { version = "5.4", features = ["time", "axum_extras", "repr", "preserve_path_order"] }
 zip = "8.6"
 zstd = "0.13.3"

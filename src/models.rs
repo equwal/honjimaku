@@ -6,7 +6,7 @@ use rusqlite::{
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
-use utoipa::ToSchema;
+use utoipa::{PartialSchema, ToSchema};
 
 use crate::{database::Table, key::SecretKey, tmdb, token::Token};
 
@@ -28,9 +28,19 @@ impl ToSql for EntryFlags {
 
 // At the API level, we expand the flags to a dict to make it easier to work
 // with for consumers
-impl<'s> ToSchema<'s> for EntryFlags {
-    fn schema() -> (&'s str, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>) {
-        ("EntryFlags", ExpandedEntryFlags::schema().1)
+impl PartialSchema for EntryFlags {
+    fn schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+        ExpandedEntryFlags::schema()
+    }
+}
+
+impl ToSchema for EntryFlags {
+    fn name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("EntryFlags")
+    }
+
+    fn schemas(schemas: &mut Vec<(String, utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>)>) {
+        ExpandedEntryFlags::schemas(schemas);
     }
 }
 

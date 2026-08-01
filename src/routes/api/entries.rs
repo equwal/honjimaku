@@ -27,7 +27,7 @@ use super::{
     get,
     path = "/api/entries/{id}",
     responses(
-        (status = 200, description = "Successfully retrieved entry", body = Entry),
+        (status = 200, description = "Successfully retrieved entry", body = DirectoryEntry),
         (status = 400, description = "Invalid ID given", body = ApiError),
         (status = 401, description = "User is unauthenticated", body = ApiError),
         (status = 404, description = "Entry not found", body = ApiError),
@@ -240,7 +240,7 @@ impl SearchQuery {
     get,
     path = "/api/entries/search",
     responses(
-        (status = 200, description = "Successful response", body = [Entry]),
+        (status = 200, description = "Successful response", body = [DirectoryEntry]),
         (status = 401, description = "User is unauthenticated", body = ApiError),
         (status = 429, response = RateLimitResponse),
     ),
