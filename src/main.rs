@@ -293,7 +293,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
     let start = std::time::Instant::now();
     let date = time::UtcDateTime::now().date();
     let filename = format!(
-        "jimaku_backup [{}-{:02}-{:02}].zip",
+        "jimaku_backup_{}-{:02}-{:02}.zip",
         date.year(),
         date.month() as u8,
         date.day()
