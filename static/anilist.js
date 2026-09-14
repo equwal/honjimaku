@@ -233,7 +233,7 @@ function anilistEntryToElement(data, payload) {
       let hidden = data.progress !== 0 ?
         !isValidFile(episodes, data.progress) || (equivalent !== null && !isValidFile(equivalent, data.progress))
         : false;
-      lastEntryEpisode = maxEpisodeFound(lastEntryEpisode, episodes);
+      lastEntryEpisode = maxEpisodeFound(lastEntryEpisode, equivalent != null ? equivalent : episodes);
       removeFoundEpisodes(episodesInEntry, episodes);
       removeFoundEpisodes(episodesInEntry, equivalent);
       isHiding = isHiding || hidden;
