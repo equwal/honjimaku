@@ -72,7 +72,11 @@ async fn dramas(
     flashes: Flashes,
     encoding: AcceptEncoding,
     Extension(cacher): Extension<BodyCache>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    // A site for books has one listing.
+    if state.config().book_site {
+        return Redirect::permanent("/").into_response();
+    }
     let entries = state.directory_entries().await;
     let bypass_cache = account.is_some();
     let editor = account.flags().is_editor();
@@ -84,7 +88,27 @@ async fn dramas(
         anime: false,
         editor,
     };
-    cacher.cache_template("dramas", template, encoding, bypass_cache).await
+    cacher
+        .cache_template("dramas", template, encoding, bypass_cache)
+        .await
+        .into_response()
+}
+
+/// The web app manifest, named after the site.
+async fn webmanifest(State(state): State<AppState>) -> impl IntoResponse {
+    let name = &state.config().site_name;
+    let manifest = serde_json::json!({
+        "name": name,
+        "short_name": name,
+        "icons": [
+            {"src": "/static/icons/android-chrome-192x192.png", "sizes": "192x192", "type": "image/png"},
+            {"src": "/static/icons/android-chrome-512x512.png", "sizes": "512x512", "type": "image/png"}
+        ],
+        "theme_color": "#091624",
+        "background_color": "#091624",
+        "display": "standalone"
+    });
+    ([(CONTENT_TYPE, "application/manifest+json")], manifest.to_string())
 }
 
 #[derive(Template)]
@@ -169,6 +193,7 @@ pub fn all() -> Router<AppState> {
     Router::new()
         .route("/", get(index))
         .route("/dramas", get(dramas))
+        .route("/site.webmanifest", get(webmanifest))
         .route("/help", get(help_page))
         .route("/backup", get(backup))
         .route("/contact", get(contact_page))

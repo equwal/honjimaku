@@ -263,15 +263,54 @@ pub async fn raw_create_directory_entry(
     if book_site && pending.anilist_id.is_none() && pending.tmdb_id.is_none() && pending.titles.is_none() {
         // A book: the user names it. Say so if the site has it already, so that the
         // subtitles of one book do not end up in two places.
-        let title = crate::book::clean_title(pending.name.as_deref().unwrap_or("")).map_err(ApiError::new)?;
+        let mut title = crate::book::clean_title(pending.name.as_deref().unwrap_or("")).map_err(ApiError::new)?;
+        // An Audible ASIN is verified: Audible says the book exists, what it is named, and
+        // in which language it is read. The entry takes the name of the shop and is verified.
+        // The user may paste the Audible URL; only the ASIN in it is kept.
+        let asin = pending.book_id.as_deref().and_then(crate::audible::asin);
         if let Some(id) = pending.book_id.take() {
-            pending.book_id = Some(crate::book::clean_book_id(&id).map_err(ApiError::new)?);
+            pending.book_id = Some(match &asin {
+                Some(asin) => asin.clone(),
+                None => crate::book::clean_book_id(&id).map_err(ApiError::new)?,
+            });
         }
+        let entries = state.directory_entries().await;
+        // One audiobook, one entry: the identifier says which book it is better than the title does.
+        if let Some(id) = &pending.book_id {
+            if let Some(same) = entries.iter().find(|e| e.book_id.as_ref() == Some(id)) {
+                return Err(ApiError::new(format!(
+                    "This audiobook is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
+                    same.name, same.id
+                ))
+                .with_code(ApiErrorCode::EntryAlreadyExists));
+            }
+        }
+        let audiobook = match &asin {
+            Some(asin) => {
+                let audiobook = crate::audible::lookup(&state.client, asin)
+                    .await
+                    .map_err(|e| {
+                        tracing::warn!(error = %e, asin, "Audible did not answer");
+                        ApiError::new("Audible did not answer. Try again later.").with_code(ApiErrorCode::ServerError)
+                    })?
+                    .ok_or_else(|| ApiError::new(format!("Audible does not know an audiobook {asin}.")))?;
+                let wanted = state.config().subtitle_language.as_deref().and_then(language_name);
+                if let (Some(wanted), Some(spoken)) = (wanted, audiobook.language.as_deref()) {
+                    if wanted != spoken {
+                        return Err(ApiError::new(format!(
+                            "That audiobook is {spoken}. This site holds {wanted} subtitles."
+                        )));
+                    }
+                }
+                title = crate::book::clean_title(&audiobook.title).map_err(ApiError::new)?;
+                Some(audiobook)
+            }
+            None => None,
+        };
         let key = crate::book::title_key(&title);
         if key.is_empty() {
             return Err(ApiError::new("Give the title of the book."));
         }
-        let entries = state.directory_entries().await;
         if let Some(same) = entries.iter().find(|e| crate::book::directory_key(&e.name) == key) {
             return Err(ApiError::new(format!(
                 "This book is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
@@ -279,14 +318,27 @@ pub async fn raw_create_directory_entry(
             ))
             .with_code(ApiErrorCode::EntryAlreadyExists));
         }
-        pending.name = Some(title);
         pending.anime = true; // the listing on the front page
-        if pending.notes.is_none() {
-            pending.notes = Some(match &pending.book_id {
-                Some(id) => format!("It is a book. Audiobook: {id}"),
-                None => "It is a book".to_owned(),
-            });
+        match audiobook {
+            Some(audiobook) => {
+                let mut flags = EntryFlags::new();
+                flags.set_adult(audiobook.adult);
+                pending.flags = Some(flags);
+                pending.titles = Some(MediaTitle {
+                    romaji: title.clone(),
+                    english: None,
+                    native: Some(title.clone()),
+                });
+                pending.notes.get_or_insert_with(|| audiobook.note());
+            }
+            None => {
+                pending.notes.get_or_insert_with(|| match &pending.book_id {
+                    Some(id) => format!("It is a book. Audiobook: {id}"),
+                    None => "It is a book".to_owned(),
+                });
+            }
         }
+        pending.name = Some(title);
     }
 
     let (names, flags) = match pending.get_info(state).await? {
@@ -315,12 +367,13 @@ pub async fn raw_create_directory_entry(
     };
 
     let query = r#"
-        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id;
     "#;
     let path_string = path_string.to_owned();
     let romaji = names.romaji.clone();
+    let book_id = pending.book_id.clone();
     let response = state
         .database()
         .call(move |con| -> Result<(i64, PathBuf), ApiError> {
@@ -338,6 +391,7 @@ pub async fn raw_create_directory_entry(
                         names.romaji,
                         names.english,
                         names.native,
+                        pending.book_id,
                     ),
                     |row| row.get("id"),
                 )
@@ -386,17 +440,31 @@ pub async fn raw_create_directory_entry(
         } else {
             format!("New Entry: {romaji}")
         };
-        state.send_alert(
-            crate::discord::Alert::success(title)
-                .url(format!("/entry/{entry_id}"))
-                .account(account)
+        let alert = crate::discord::Alert::success(title)
+            .url(format!("/entry/{entry_id}"))
+            .account(account);
+        let alert = if book_site {
+            alert.field("Audiobook", book_id.unwrap_or_else(|| String::from("Unknown")))
+        } else {
+            alert
                 .field("Anime", pending.anime)
                 .field("AniList URL", anilist_url)
-                .field("TMDB URL", tmdb_url),
-        );
+                .field("TMDB URL", tmdb_url)
+        };
+        state.send_alert(alert);
         state.cached_directories().invalidate().await;
     }
     response
+}
+
+/// The language of the site as Audible names the language of an audiobook.
+fn language_name(code: &str) -> Option<&'static str> {
+    match code {
+        "ja" => Some("japanese"),
+        "zh" => Some("chinese"),
+        "en" => Some("english"),
+        _ => None,
+    }
 }
 
 async fn create_directory_entry(
@@ -426,6 +494,9 @@ struct EditDirectoryEntry {
     notes: Option<String>,
     #[serde(rename = "tmdb_url", deserialize_with = "tmdb_url")]
     tmdb_id: Option<tmdb::Id>,
+    /// On a site for books: the identifier of the audiobook. An ASIN is verified against Audible.
+    #[serde(default, deserialize_with = "crate::utils::empty_string_is_none")]
+    book_id: Option<String>,
     #[serde(default)]
     unverified: bool,
     #[serde(default)]
@@ -531,6 +602,32 @@ async fn edit_directory_entry(
         return Redirect::to(&url).into_response();
     }
 
+    let mut payload = payload;
+    if let Some(id) = payload.book_id.take() {
+        // A new ASIN must be one that Audible knows. The user may paste the Audible URL.
+        payload.book_id = match crate::audible::asin(&id) {
+            Some(asin) if entry.book_id.as_deref() != Some(&asin) => {
+                match crate::audible::lookup(&state.client, &asin).await {
+                    Ok(Some(_)) => Some(asin),
+                    Ok(None) => {
+                        return flasher
+                            .add(format!("Audible does not know an audiobook {asin}."))
+                            .bail(&url)
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, asin, "Audible did not answer");
+                        return flasher.add("Audible did not answer. Try again later.").bail(&url);
+                    }
+                }
+            }
+            Some(asin) => Some(asin),
+            None => match crate::book::clean_book_id(&id) {
+                Ok(id) => Some(id),
+                Err(e) => return flasher.add(e).bail(&url),
+            },
+        };
+    }
+
     // maybe refactor this?
     let mut columns = Vec::with_capacity(11);
     let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::with_capacity(11);
@@ -566,6 +663,12 @@ async fn edit_directory_entry(
         audit_data.before.tmdb_id = entry.tmdb_id;
         audit_data.after.tmdb_id = payload.tmdb_id;
         params.push(Box::new(payload.tmdb_id));
+    }
+    if entry.book_id != payload.book_id {
+        columns.push("book_id");
+        audit_data.before.book_id = entry.book_id;
+        audit_data.after.book_id = payload.book_id.clone();
+        params.push(Box::new(payload.book_id));
     }
     if entry.notes != payload.notes {
         columns.push("notes");
@@ -624,6 +727,8 @@ struct SearchQueryParams {
     #[serde(default)]
     tmdb_id: Option<String>,
     #[serde(default)]
+    book_id: Option<String>,
+    #[serde(default)]
     name: Option<String>,
 }
 
@@ -641,7 +746,7 @@ async fn search_directory_entries(
         return Err(ApiError::forbidden());
     }
 
-    if params.anilist_id.is_none() && params.name.is_none() && params.tmdb_id.is_none() {
+    if params.anilist_id.is_none() && params.name.is_none() && params.tmdb_id.is_none() && params.book_id.is_none() {
         return Err(ApiError::new("Missing search parameter"));
     }
 
@@ -650,12 +755,17 @@ async fn search_directory_entries(
         .as_deref()
         .map(sanitise_file_name::sanitise)
         .and_then(|x| state.config().subtitle_path.join(x).to_str().map(String::from));
+    let book_id = params
+        .book_id
+        .as_deref()
+        .and_then(crate::audible::asin)
+        .or(params.book_id);
 
     let entry = state
         .database()
         .get_row(
-            "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR name = ? OR path = ?",
-            (params.anilist_id, params.tmdb_id, params.name, path),
+            "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR book_id = ? OR name = ? OR path = ?",
+            (params.anilist_id, params.tmdb_id, book_id, params.name, path),
             |row| row.get(0),
         )
         .await
@@ -672,6 +782,8 @@ struct MoveDirectoryEntries {
     anilist_id: Option<u32>,
     #[serde(default, rename = "tmdb")]
     tmdb_id: Option<tmdb::Id>,
+    #[serde(default)]
+    book_id: Option<String>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -713,7 +825,7 @@ async fn move_directory_entries(
                 &state,
                 account.clone(),
                 PendingDirectoryEntry {
-                    book_id: None,
+                    book_id: payload.book_id.clone(),
                     anilist_id: payload.anilist_id,
                     tmdb_id: payload.tmdb_id,
                     name: payload.name.clone(),

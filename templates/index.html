@@ -25,7 +25,9 @@
 {{ flash.html()|safe }}
 {% endfor %}
 {%- let placeholder -%}
-{%- if anime -%}
+{%- if crate::CONFIG.get().unwrap().book_site -%}
+{%- let placeholder = "Search books by title or Audible ASIN..." -%}
+{%- else if anime -%}
 {%- let placeholder = "Search files by name or AniList URL..." -%}
 {%- else -%}
 {%- let placeholder = "Search files by name or TMDB URL..." -%}
@@ -67,8 +69,8 @@
       <label for="directory-name">Title of the book, as the audiobook shop writes it</label>
       <input class="form-field" name="name" id="directory-name" required maxlength="200"
              placeholder="吾輩は猫である" autocomplete="off" type="text">
-      <label for="book-id">Audiobook ID, if there is one (Audible ASIN, audiobook.jp number)</label>
-      <input class="form-field" name="book_id" id="book-id" maxlength="40" pattern="[A-Za-z0-9 ._\-]*"
+      <label for="book-id">Audible ASIN or URL (checked against Audible, which then names the entry), else an audiobook.jp number</label>
+      <input class="form-field" name="book_id" id="book-id" maxlength="200"
              placeholder="B0BPXSSWVF" autocomplete="off" type="text">
       <input type="hidden" name="anime" value="true">
     </div>

@@ -26,7 +26,7 @@ pub use entries::SearchQuery;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "Jimaku",
+        title = "",
         description = include_str!("../../../templates/api_description.md"),
         version = "beta"
     ),
@@ -73,8 +73,11 @@ struct ApiDocumentation {
     api_key: String,
 }
 
-async fn spec() -> Json<utoipa::openapi::OpenApi> {
-    Json(Schema::openapi())
+async fn spec(State(state): State<AppState>) -> Json<utoipa::openapi::OpenApi> {
+    // The API is named after the site.
+    let mut spec = Schema::openapi();
+    spec.info.title = state.config().site_name.clone();
+    Json(spec)
 }
 
 async fn docs(State(state): State<AppState>, account: Option<Account>) -> HtmlPage<ApiDocumentation> {

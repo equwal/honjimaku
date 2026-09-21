@@ -296,8 +296,11 @@ pub struct CreatePayload {
     flags: Option<EntryFlags>,
     /// On a site for books: the identifier of the audiobook (an Audible ASIN, an audiobook.jp number).
     ///
+    /// An Audible ASIN is verified against the Audible catalog: the entry takes the title
+    /// as Audible writes it, and it is verified. An ASIN that Audible does not know is refused.
+    ///
     /// On such a site each user may give `name`, the title of the book. If the site has
-    /// a book with that title already, its entry is returned and nothing is made.
+    /// a book with that ASIN or title already, its entry is returned and nothing is made.
     #[serde(default)]
     book_id: Option<String>,
 }
@@ -361,11 +364,16 @@ pub async fn create_entry(
         if let Some(name) = &payload.name {
             let title = crate::book::clean_title(name).map_err(ApiError::new)?;
             let key = crate::book::title_key(&title);
+            // The ASIN of the audiobook names the book better than its title does.
+            let asin = payload.book_id.as_deref().and_then(crate::audible::asin);
             let existing = state
                 .directory_entries()
                 .await
                 .iter()
-                .find(|e| !key.is_empty() && crate::book::directory_key(&e.name) == key)
+                .find(|e| {
+                    (asin.is_some() && e.book_id == asin)
+                        || (!key.is_empty() && crate::book::directory_key(&e.name) == key)
+                })
                 .map(|e| e.id);
             let entry_id = match existing {
                 Some(id) => id,

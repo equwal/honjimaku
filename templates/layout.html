@@ -36,7 +36,9 @@
             {% endblock %}
             {% if let Some(account) = account %}
             {% if let Some(username) = account.anilist_username.as_ref() %}
+            {%- if !crate::CONFIG.get().unwrap().book_site %}
             <a class="nav-item" href="/anilist/{{ username }}">Anime List</a>
+            {%- endif %}
             {% endif %}
             {% if account.flags.is_editor() %}
             <a class="nav-item" href="/logs">Audit Logs</a>

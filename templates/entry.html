@@ -20,6 +20,13 @@
 <script>const entryId = {{entry.id}};const entryData = {{entry.data()|json|safe}};</script>
 <div class="entry-info">
   <h1 class="title">{{ entry.name }}</h1>
+  {%- if let Some(book_id) = entry.book_id %}
+  {%- if let Some(asin) = crate::audible::asin(book_id) %}
+  <div class="external-links">
+    <a href="{{ crate::audible::url(asin) }}" title="Audible page for this audiobook">Audible {{ asin }}</a>
+  </div>
+  {%- endif %}
+  {%- endif %}
   {% match entry.anilist_id -%}
     {% when Some with (id) -%}
   <div class="external-links">
@@ -158,6 +165,12 @@
       <label for="entry-english-name">English Name</label>
       <input class="form-field" value="{{ entry.english_name|maybe_display }}"
              name="english_name" id="entry-english-name" autocomplete="off" type="text">
+      {%- if crate::CONFIG.get().unwrap().book_site %}
+      <label for="entry-book-id">Audiobook ID (an Audible ASIN or URL is checked against Audible)</label>
+      <input class="form-field" value="{{ entry.book_id|maybe_display }}" maxlength="200"
+             placeholder="B0BPXSSWVF" name="book_id" id="entry-book-id" autocomplete="off" type="text">
+      <input type="hidden" name="anime" value="true">
+      {%- else %}
       <label for="entry-anilist-id">AniList ID or URL</label>
       <input class="form-field" value="{{ entry.anilist_id|maybe_display }}"
              pattern="^(?:[0-9]*|(?:https:\/\/anilist\.co\/anime\/(\d+)(?:\/.*)?))$"
@@ -167,27 +180,32 @@
              pattern="{{ crate::filters::TMDB_PATTERN }}"
              placeholder="https://www.themoviedb.org/tv/12345" name="tmdb_url" id="entry-tmdb-url"
              autocomplete="off" type="text">
+      {%- endif %}
       <div class="form-field checkboxes">
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_unverified() -%}checked{% endif %}
                  name="unverified" id="entry-unverified" type="checkbox">
           <label for="entry-unverified">Unverified</label>
         </div>
+        {%- if !crate::CONFIG.get().unwrap().book_site %}
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_movie() -%}checked{% endif %}
                  name="movie" id="entry-movie" type="checkbox">
           <label for="entry-movie">Movie</label>
         </div>
+        {%- endif %}
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_adult() -%}checked{% endif %}
                  name="adult" id="entry-adult" type="checkbox">
           <label for="entry-adult">Adult</label>
         </div>
+        {%- if !crate::CONFIG.get().unwrap().book_site %}
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_anime() -%}checked{% endif %}
                  name="anime" id="entry-anime" type="checkbox">
           <label for="entry-anime">Anime</label>
         </div>
+        {%- endif %}
       </div>
       <label for="entry-notes">Notes</label>
       <textarea class="form-field" name="notes" id="entry-notes" autocomplete="off"
@@ -196,7 +214,9 @@
     </div>
     <footer>
       <button id="confirm-edit" class="button primary">Confirm</button>
+      {%- if !crate::CONFIG.get().unwrap().book_site %}
       <button id="update-info" type="button" class="button" value="sync">Sync</button>
+      {%- endif %}
       <button class="button" value="cancel" formmethod="dialog">Cancel</button>
     </footer>
   </form>
@@ -205,6 +225,17 @@
 <dialog id="move-entries-modal">
   <form autocomplete="off">
     <h1>Move Entries</h1>
+    {%- if crate::CONFIG.get().unwrap().book_site %}
+    <p>
+      This operation moves the selected files to either a new or pre-existing folder.
+      The entry is found or created by the Audible ASIN or by the name. If an entry ID
+      is given then that takes priority.
+    </p>
+    <div class="form-container">
+      <label for="book-id">Audible ASIN or URL</label>
+      <input class="form-field" placeholder="B0BPXSSWVF" name="book_id" id="book-id" maxlength="200"
+             autocomplete="off" type="text">
+    {%- else %}
     <p>
       This operation moves the selected files to either a new or pre-existing folder.
       The entry is created either by the provided AniList URL, the TMDB URL, or the name,
@@ -224,6 +255,7 @@
              pattern="{{ crate::filters::TMDB_PATTERN }}"
              placeholder="https://www.themoviedb.org/tv/12345" name="tmdb_url" id="tmdb-url"
              autocomplete="off" type="text">
+    {%- endif %}
       <label for="move-to-entry-id">Entry ID</label>
       <input class="form-field" pattern="[0-9]+" name="entry_id" id="move-to-entry-id" autocomplete="off" type="text">
       <label for="directory-name">Directory Name</label>

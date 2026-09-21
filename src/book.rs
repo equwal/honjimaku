@@ -46,6 +46,16 @@ pub fn title_key(title: &str) -> String {
         .collect()
 }
 
+/// The identifier in brackets at the end of a directory name: `B0BPXSSWVF` in
+/// `走れメロス [B0BPXSSWVF]`.
+pub fn book_id_in(name: &str) -> Option<&str> {
+    let name = name.trim();
+    match (name.rfind(" ["), name.ends_with(']')) {
+        (Some(at), true) if at > 0 => Some(&name[at + 2..name.len() - 1]),
+        _ => None,
+    }
+}
+
 /// The key of a directory name on disk, which can carry what a title does not: a number
 /// in brackets at the front (`[01] `, the place in a series) and an identifier in brackets
 /// at the end (` [B0BPXSSWVF]`). Both are dropped. The title itself says which volume it is.
@@ -57,9 +67,9 @@ pub fn directory_key(name: &str) -> String {
             _ => break,
         }
     }
-    let without_id = match (name.rfind(" ["), name.ends_with(']')) {
-        (Some(at), true) if at > 0 => &name[..at],
-        _ => name,
+    let without_id = match book_id_in(name) {
+        Some(id) => &name[..name.len() - id.len() - 3],
+        None => name,
     };
     title_key(without_id)
 }
@@ -110,5 +120,14 @@ mod tests {
         assert_eq!(directory_key("走れメロス [B00YT6SNSW]"), title_key("走れメロス"));
         assert_eq!(directory_key("さぶ"), title_key("さぶ"));
         assert_eq!(directory_key("[drama]"), title_key("drama"));
+    }
+
+    #[test]
+    fn the_identifier_is_read_from_a_directory_name() {
+        assert_eq!(book_id_in("走れメロス [B00YT6SNSW]"), Some("B00YT6SNSW"));
+        assert_eq!(book_id_in("[01] MM9 [kikubon 139]"), Some("kikubon 139"));
+        assert_eq!(book_id_in("さぶ"), None);
+        assert_eq!(book_id_in("[drama]"), None);
+        assert_eq!(book_id_in("a []"), Some(""));
     }
 }

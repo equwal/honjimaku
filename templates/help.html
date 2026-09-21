@@ -68,8 +68,8 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
 {%- if crate::CONFIG.get().unwrap().book_site %}
 <div id="content">
   <h1 id="find">Find subtitles</h1>
-  <p>Each entry is one audiobook. Type a part of the title in the search box on the front page. An entry with
-    "unverified" beside it was added by a user, and no editor has looked at it yet.</p>
+  <p>Each entry is one audiobook. Type a part of the title, or the Audible ASIN, in the search box on the front page.
+    An entry with "unverified" beside it was added by a user without an Audible ASIN, and no editor has looked at it yet.</p>
 
   <h1 id="use">Use them</h1>
   <p>The files are <code>.srt</code> subtitles whose times fit the audiobook: each line says when the narrator reads it.
@@ -86,7 +86,9 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
     <li>Make an account (Login, then Register). A user name and a password are all it takes.</li>
     <li>Search for the book. If it is here, open it and press Upload.</li>
     <li>If it is not, press the upload button on the front page and add the book: the title as the audiobook shop writes it,
-      and the ID of the audiobook if there is one (an Audible ASIN such as <code>B0BPXSSWVF</code>, an audiobook.jp number).
+      and the ID of the audiobook if there is one (an Audible ASIN such as <code>B0BPXSSWVF</code>, or the Audible URL,
+      or an audiobook.jp number). The site checks an Audible ASIN against Audible and takes the title from there, so
+      such an entry is verified at once. An entry without one stays "unverified" until an editor looks at it.
       Then upload to the new entry.</li>
   </ol>
   <p>subread.space can send the file here by itself: generate an API key on your <a href="/account">account page</a> and

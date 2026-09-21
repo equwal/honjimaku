@@ -129,7 +129,6 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     // and for response processing it's top to bottom
     let router = jimaku::routes::all()
         .nest_service("/favicon.ico", ServeFile::new("static/icons/favicon.ico"))
-        .nest_service("/site.webmanifest", ServeFile::new("static/icons/site.webmanifest"))
         .nest_service("/robots.txt", ServeFile::new("static/robots.txt"))
         .nest_service("/static", ServeDir::new("static"))
         .layer(middleware::from_fn_with_state(state.clone(), jimaku::copy_api_token))
@@ -269,17 +268,22 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
     include_str!("../sql/3.sql"),
+    include_str!("../sql/4.sql"),
 ];
 
 fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     rusqlite::vtab::array::load_module(connection)?;
     connection.execute_batch("PRAGMA foreign_keys=1;\nPRAGMA journal_mode=wal;")?;
-    let tx = connection.transaction()?;
+    // Each worker of the pool runs this at the same time. When a migration is due, the
+    // first worker holds the write lock; the others wait for it, then read the new
+    // version and skip. Without the wait the server fails with "database is locked".
+    connection.busy_timeout(Duration::from_secs(60))?;
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let version: usize = {
         let mut stmt = tx.prepare_cached("PRAGMA user_version;")?;
         stmt.query_row([], |r| r.get(0))?

@@ -1,16 +1,16 @@
 ### Overview
 
-Welcome to the Jimaku API. You can use this API to access the contents of the site. The API is based off of a simple REST API with a few endpoints.
+Welcome to the API of this site. You can use this API to access the contents of the site. The API is based off of a simple REST API with a few endpoints.
 
 ### Authentication
 
-Jimaku uses API keys to allow access to the API. Authentication is done using the `Authorization` header. Note that in order to use this API, an account is required. Please [register](/login) if you have not done so already.
+The site uses API keys to allow access to the API. Authentication is done using the `Authorization` header. Note that in order to use this API, an account is required. Please [register](/login) if you have not done so already.
 
 If you have not generated an API key yet, you can do so on your [account page](/account).
 
 ### Core Concepts
 
-Jimaku is basically a directory listing where every [Entry](#model/entry) represents a directory. These directories are backed by either a TMDB ID or an AniList ID. Users with editor privileges can bypass this requirement for extraordinary cases.
+The site is basically a directory listing where every [Entry](#model/entry) represents a directory. On a site for anime these directories are backed by either a TMDB ID or an AniList ID. On a site for books they are backed by the `book_id` of the audiobook: an Audible ASIN, which the site verifies against the Audible catalog. Users with editor privileges can bypass this requirement for extraordinary cases.
 
 Each directory entry has a set of files that can be downloaded.
 

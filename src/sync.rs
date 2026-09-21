@@ -58,15 +58,25 @@ pub async fn sync_books(state: &AppState) -> anyhow::Result<usize> {
             if missing.is_empty() {
                 return Ok(0);
             }
+            // One ASIN names one entry. A second folder with the same ASIN gets none.
+            let mut taken: HashSet<String> = {
+                let mut stmt = con.prepare("SELECT book_id FROM directory_entry WHERE book_id IS NOT NULL")?;
+                let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
             let mut flags = EntryFlags::new();
             flags.set_anime(true); // the listing on the front page
             let tx = con.transaction()?;
             {
                 let mut insert = tx.prepare(
-                    "INSERT INTO directory_entry(path, flags, notes, name, japanese_name) VALUES (?, ?, 'It is a book', ?, ?)",
+                    "INSERT INTO directory_entry(path, flags, notes, name, japanese_name, book_id) VALUES (?, ?, 'It is a book', ?, ?, ?)",
                 )?;
                 for (path, name) in &missing {
-                    insert.execute((path, flags, name, name))?;
+                    // A folder named "title [B0BPXSSWVF]" carries the ASIN of the audiobook.
+                    let book_id = crate::book::book_id_in(name)
+                        .and_then(crate::audible::asin)
+                        .filter(|asin| taken.insert(asin.clone()));
+                    insert.execute((path, flags, name, name, book_id))?;
                 }
             }
             tx.commit()?;
@@ -114,15 +124,22 @@ mod tests {
         // scraper had left in the directory of a site for books.
         std::fs::create_dir_all(root.join("Biohazard Degeneration")).unwrap();
         assert_eq!(folders_without_entry(&root, &known).len(), 2);
-        std::fs::write(root.join(".syncignore"), "# left by the scraper
+        std::fs::write(
+            root.join(".syncignore"),
+            "# left by the scraper
 Biohazard Degeneration
 
-").unwrap();
+",
+        )
+        .unwrap();
         let missing = folders_without_entry(&root, &known);
         assert_eq!(missing.len(), 1);
         assert_eq!(missing[0].1, "吾輩は猫である [B0TEST]");
 
         std::fs::remove_dir_all(&root).unwrap();
-        assert!(folders_without_entry(&root, &known).is_empty(), "a directory that is not there is no error");
+        assert!(
+            folders_without_entry(&root, &known).is_empty(),
+            "a directory that is not there is no error"
+        );
     }
 }

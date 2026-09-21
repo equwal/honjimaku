@@ -220,8 +220,17 @@ function filterEntries(query) {
   let parentNode = entries[0].parentNode;
   let anilistId = getAnilistId(query);
   let tmdb = getTmdbId(query);
+  // An Audible ASIN: ten characters, the first a B. Only the book with it matches.
+  let asin = /^B[A-Z0-9]{9}$/.test(query.trim()) ? query.trim() : null;
   let mapped = [];
-  if (anilistId !== null) {
+  if (asin !== null) {
+    mapped = entries.map(e => {
+      return {
+        entry: e,
+        score: e.dataset.bookId === asin ? 0 : MIN_SCORE,
+      };
+    });
+  } else if (anilistId !== null) {
     mapped = entries.map(e => {
       let id = e.dataset.anilistId;
       return {

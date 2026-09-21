@@ -46,6 +46,9 @@ async fn opensearch_anime(State(state): State<AppState>) -> Response {
 }
 
 async fn opensearch_dramas(State(state): State<AppState>) -> Response {
+    if state.config().book_site {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
     generate_opensearch_xml(&state, false)
 }
 

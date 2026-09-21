@@ -27,10 +27,14 @@ TITLE = '吾輩は猫である%d' % random.randrange(10**6)
 home = s.get(B + '/').text
 check('the front page offers "Add a book", with no AniList field', 'Add a book' in home and 'anilist-url' not in home)
 
-r = s.post(B + '/entry/create', data={'name': '  ' + TITLE.replace('は', 'は　') + ' ', 'book_id': 'B0TEST1234', 'anime': 'true'})
+# An ID that is not an Audible ASIN is not checked: the entry is made, unverified.
+BOOK_ID = 'audiobook.jp %d' % random.randrange(10**6)
+r = s.post(B + '/entry/create', data={'name': '  ' + TITLE.replace('は', 'は　') + ' ', 'book_id': BOOK_ID, 'anime': 'true'})
 m = re.search(r'/entry/(\d+)', r.url)
-check('a user (not an editor) makes a book entry', bool(m), r.url)
-entry = int(m.group(1))
+check('a user (not an editor) makes a book entry without an ASIN', bool(m), (r.url, flashes(r.text)))
+entry = int(m.group(1)) if m else sys.exit(1)
+r = s.post(B + '/entry/create', data={'name': 'another title', 'book_id': BOOK_ID, 'anime': 'true'})
+check('the same audiobook ID again is refused, and the entry is named', any('here already' in f and f'/entry/{entry}' in f for f in flashes(r.text)), flashes(r.text))
 page = s.get(B + f'/entry/{entry}').text
 check('the entry has the clean title, and is marked unverified', TITLE.replace('は', 'は ') in page and 'nverified' in page)
 
@@ -87,11 +91,18 @@ if not key:
 check('the user gets an API key', bool(key), (r.status_code, r.text[:120]))
 if key:
     api = requests.Session(); api.headers.update({'Authorization': key, 'Origin': 'https://subread.space'})
-    r = patient(lambda: api.post(B + '/api/entries', json={'name': '１Ｑ８４ BOOK' + TITLE[-6:], 'book_id': 'B0BPXSSWVF'}))
-    check('API: a user names a new book', r.status_code == 200 and 'entry_id' in r.json(), r.text[:200])
+    # 草枕 (夏目漱石) on Audible; not on honjimaku.com on 2026-09-21
+    r = patient(lambda: api.post(B + '/api/entries', json={'name': 'kusamakura ' + TITLE[-6:], 'book_id': 'B01J50DT5S'}))
+    check('API: a user names a new book by its ASIN', r.status_code == 200 and 'entry_id' in r.json(), r.text[:200])
     first = r.json().get('entry_id')
-    r = patient(lambda: api.post(B + '/api/entries', json={'name': '1q84 book' + TITLE[-6:]}))
-    check('API: the same book again gives the same entry', r.status_code == 200 and r.json().get('entry_id') == first, r.text[:200])
+    r = patient(lambda: api.post(B + '/api/entries', json={'name': 'whatever ' + TITLE[-6:], 'book_id': 'B01J50DT5S'}))
+    check('API: the same ASIN again gives the same entry', r.status_code == 200 and r.json().get('entry_id') == first, r.text[:200])
+    r = patient(lambda: api.post(B + '/api/entries', json={'name': '草　枕'}))
+    check('API: the Audible title typed another way gives the same entry', r.status_code == 200 and r.json().get('entry_id') == first, r.text[:200])
+    got = api.get(B + f'/api/entries/{first}').json()
+    check('API: the entry carries book_id and the Audible title, and is verified', got.get('book_id') == 'B01J50DT5S' and got.get('name') == '草枕' and not got.get('flags', {}).get('unverified', True), got)
+    r = patient(lambda: api.post(B + '/api/entries', json={'name': 'nothing', 'book_id': 'B0000000XX'}))
+    check('API: an ASIN that Audible does not know is refused', r.status_code >= 400 and 'does not know' in r.text, r.text[:200])
     r = patient(lambda: api.post(B + f'/api/entries/{first}/upload', files=[('file', ('1q84.ja.srt', book(500, '青豆はタクシーの中で音楽を聴いていた。'), 'application/x-subrip'))]))
     check('API: upload, and the answer carries no problems', r.status_code == 200 and r.json().get('problems') == [], r.text[:200])
     r = patient(lambda: api.post(B + f'/api/entries/{first}/upload', files=[('file', ('bad.srt', b'nothing', 'application/x-subrip'))]))
@@ -99,6 +110,52 @@ if key:
     r = api.options(B + '/api/entries', headers={'Origin': 'https://subread.space', 'Access-Control-Request-Method': 'POST', 'Access-Control-Request-Headers': 'authorization,content-type'})
     allowed = r.headers.get('access-control-allow-headers', '').lower()
     check('API: a page on subread.space may send JSON with its key (CORS preflight)', 'content-type' in allowed and 'authorization' in allowed, dict(r.headers))
+
+# --- the verifier: Audible. A real ASIN names the entry; a false one is refused.
+ASIN = 'B0C9BGK57W'  # 坊っちゃん, 夏目漱石, Japanese; not on honjimaku.com on 2026-09-21
+AUDIBLE_TITLE = '坊っちゃん'
+AUTHOR = '夏目 漱石'
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'rebuild world (typed by the user)', 'book_id': 'https://www.audible.co.jp/pd/x/' + ASIN + '?ref=x', 'anime': 'true'}))
+m = re.search(r'/entry/(\d+)', r.url)
+if not m:  # a second run: the site has it already, and says where
+    m = re.search(r'/entry/(\d+)', ' '.join(flashes(r.text)))
+check('a book with an Audible URL is made (or found again)', bool(m), (r.url, flashes(r.text)))
+verified = int(m.group(1)) if m else None
+page = s.get(B + f'/entry/{verified}').text if verified else ''
+check('the entry takes the title as Audible writes it', AUDIBLE_TITLE in page, page[:0])
+check('the entry is verified, not "unverified"', 'nverified' not in page and 'Audible ' + ASIN in page)
+check('the note names the author from Audible', AUTHOR in page)
+
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'another name', 'book_id': ASIN, 'anime': 'true'}))
+check('the same ASIN again is refused, and the entry is named', any('here already' in f and f'/entry/{verified}' in f for f in flashes(r.text)), flashes(r.text))
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'nothing', 'book_id': 'B0000000XX', 'anime': 'true'}))
+check('an ASIN that Audible does not know is refused', any('does not know' in f for f in flashes(r.text)), flashes(r.text))
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'Pride and Prejudice', 'book_id': 'B01BNU3A7K', 'anime': 'true'}))
+check('an English audiobook is refused on the Japanese site', any('english' in f and 'japanese' in f for f in flashes(r.text)), flashes(r.text))
+
+# the database: the ASIN is a column of its own, the entry is verified, and the file lands in the folder
+if verified:
+    entry = verified
+    SRT = 'botchan%d.srt' % random.randrange(10**6)
+    r = upload([(SRT, book(400, '親譲りの無鉄砲で小供の時から損ばかりしている。'), 'application/x-subrip')])
+    check('an .srt uploads to the verified entry', any('successful' in f.lower() for f in flashes(r.text)), flashes(r.text))
+    import os, sqlite3
+    db = os.environ.get('JIMAKU_DB')
+    if db:
+        con = sqlite3.connect(db)
+        row = con.execute('SELECT name, book_id, flags, path FROM directory_entry WHERE id = ?', (verified,)).fetchone()
+        check('DB: the row holds the ASIN in book_id and is not flagged unverified', row and row[1] == ASIN and (row[2] & 2) == 0, row)
+        check('DB: the folder is named after the Audible title and the ASIN', row and row[3].endswith(f'{AUDIBLE_TITLE} [{ASIN}]') and os.path.isfile(os.path.join(row[3], SRT)), row and row[3])
+        check('DB: book_id is unique', con.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='directory_entry_book_id_idx'").fetchone()[0] == 1)
+        check('DB: older folders got their ASIN from the path', con.execute("SELECT count(*) FROM directory_entry WHERE path LIKE '%[B0________]' AND book_id IS NULL AND substr(path,-11,10) IN (SELECT substr(path,-11,10) FROM directory_entry GROUP BY 1 HAVING count(*)=1)").fetchone()[0] == 0)
+
+# the site speaks of books only
+home = s.get(B + '/').text
+check('no "Live Action" tab, no "Jimaku"', 'Live Action' not in home and 'Jimaku' not in home)
+r = s.get(B + '/dramas', allow_redirects=False)
+check('/dramas goes to the front page', r.status_code in (301, 308) and r.headers.get('location') == '/')
+check('the manifest is named after the site', 'Jimaku' not in s.get(B + '/site.webmanifest').text)
+check('the API docs are named after the site', 'Jimaku' not in s.get(B + '/api/docs').text and 'Jimaku' not in s.get(B + '/api/openapi.json').text)
 
 print(f'{sum(results)} of {len(results)} pass')
 sys.exit(0 if all(results) else 1)

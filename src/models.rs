@@ -238,6 +238,10 @@ pub struct DirectoryEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(pattern = r#"(tv|movie):(\d+)"#, value_type = Option<String>, example = "tv:12345")]
     pub tmdb_id: Option<tmdb::Id>,
+    /// On a site for books: the identifier of the audiobook. An Audible ASIN is verified against Audible.
+    #[schema(example = "B0BPXSSWVF")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub book_id: Option<String>,
     /// Extra notes that the entry might have.
     ///
     /// Supports a limited set of markdown. Can only be set by editors.
@@ -264,6 +268,7 @@ impl Table for DirectoryEntry {
         "creator_id",
         "anilist_id",
         "tmdb_id",
+        "book_id",
         "notes",
         "english_name",
         "japanese_name",
@@ -283,6 +288,7 @@ impl Table for DirectoryEntry {
             creator_id: row.get("creator_id")?,
             anilist_id: row.get("anilist_id")?,
             tmdb_id: row.get("tmdb_id")?,
+            book_id: row.get("book_id")?,
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
@@ -304,6 +310,8 @@ pub struct DirectoryEntryBackup {
     pub anilist_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tmdb_id: Option<tmdb::Id>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub book_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -327,6 +335,8 @@ pub struct DirectoryEntryData<'a> {
     pub anilist_id: Option<u32>,
     /// The TMDB ID of this entry.
     pub tmdb_id: Option<tmdb::Id>,
+    /// The identifier of the audiobook, on a site for books.
+    pub book_id: &'a Option<String>,
     /// The English name of the entry.
     pub english_name: &'a Option<String>,
     /// The Japanese name of the entry, i.e. with kanji and kana.
@@ -348,6 +358,7 @@ impl DirectoryEntry {
             creator_id: Default::default(),
             anilist_id: Default::default(),
             tmdb_id: Default::default(),
+            book_id: Default::default(),
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
@@ -362,6 +373,7 @@ impl DirectoryEntry {
             last_updated_at: &self.last_updated_at,
             anilist_id: self.anilist_id,
             tmdb_id: self.tmdb_id,
+            book_id: &self.book_id,
             english_name: &self.english_name,
             japanese_name: &self.japanese_name,
         }
@@ -376,6 +388,7 @@ impl DirectoryEntry {
             last_updated_at: self.last_updated_at,
             anilist_id: self.anilist_id,
             tmdb_id: self.tmdb_id,
+            book_id: self.book_id,
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
@@ -424,6 +437,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             creator_id: None,
             anilist_id: value.anilist_id,
             tmdb_id: value.tmdb_id,
+            book_id: value.book_id,
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,

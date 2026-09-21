@@ -450,6 +450,12 @@ class BulkFilesOperations {
         payload.anime = false;
         params.append('tmdb_id', payload.tmdb);
       }
+      // On a site for books: the audiobook, which the server checks against Audible.
+      let bookId = document.getElementById('book-id')?.value?.trim();
+      if (bookId) {
+        payload.book_id = bookId;
+        params.append('book_id', bookId);
+      }
       let name = document.getElementById('directory-name').value;
       if(name) {
         payload.name = name;
@@ -463,7 +469,7 @@ class BulkFilesOperations {
     }
 
     if(Object.keys(payload).length === 1) {
-      showModalAlert(this.moveModal, {level: 'error', content: 'Either a name, AniList URL, or TMDB URL is required'});
+      showModalAlert(this.moveModal, {level: 'error', content: 'Either a name, an audiobook ID, AniList URL, or TMDB URL is required'});
       return;
     }
 

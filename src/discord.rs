@@ -128,7 +128,12 @@ impl Alert {
     /// The alert color for error.
     pub const ERROR: u32 = 0xa4392f;
 
-    const fn new_with(color: u32, title: Cow<'static, str>) -> Self {
+    fn new_with(color: u32, title: Cow<'static, str>) -> Self {
+        // The alert speaks as the site, whatever it is named.
+        let username = match crate::CONFIG.get() {
+            Some(config) => Cow::Owned(config.site_name.clone()),
+            None => Cow::Borrowed("Jimaku"),
+        };
         Self {
             title,
             url: None,
@@ -136,7 +141,7 @@ impl Alert {
             fields: Vec::new(),
             description: None,
             color,
-            username: Cow::Borrowed("Jimaku"),
+            username,
         }
     }
 
