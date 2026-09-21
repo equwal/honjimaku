@@ -7,7 +7,7 @@
 {% endblock %}
 
 {% block title %}
-My Account · Jimaku
+My Account · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block body_end %}

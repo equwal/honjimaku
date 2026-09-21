@@ -3,17 +3,21 @@
 {% block css %}
 <link rel="stylesheet" href="/static/entry.css" type="text/css">
 {%- if anime -%}
-<link rel="search" href="/opensearch/anime.xml" type="application/opensearchdescription+xml" title="Jimaku Anime">
+<link rel="search" href="/opensearch/anime.xml" type="application/opensearchdescription+xml" title="{{ crate::CONFIG.get().unwrap().site_name }}{% if !crate::CONFIG.get().unwrap().book_site %} Anime{% endif %}">
 {%- else -%}
-<link rel="search" href="/opensearch/dramas.xml" type="application/opensearchdescription+xml" title="Jimaku Dramas">
+<link rel="search" href="/opensearch/dramas.xml" type="application/opensearchdescription+xml" title="{{ crate::CONFIG.get().unwrap().site_name }} Dramas">
 {%- endif -%}
 <meta property="og:url" content="{{ url }}">
-<meta property="og:title" content="Jimaku: Japanese subtitles">
+<meta property="og:title" content="{{ crate::CONFIG.get().unwrap().site_name }}: {% if crate::CONFIG.get().unwrap().book_site %}subtitles for audiobooks{% else %}Japanese subtitles{% endif %}">
 {% endblock %}
 
 {% block index_nav %}
+{%- if crate::CONFIG.get().unwrap().book_site %}
+<a class="nav-item active" href="/">Books</a>
+{%- else %}
 <a class="nav-item {% if anime %}active{% endif %}" href="/">Anime</a>
 <a class="nav-item {% if !anime %}active{% endif %}" href="/dramas">Live Action</a>
+{%- endif %}
 {% endblock %}
 
 {% block body %}

@@ -9,7 +9,7 @@
 {% endblock %}
 
 {% block title %}
-{{ entry.name }} · Jimaku
+{{ entry.name }} · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block body %}

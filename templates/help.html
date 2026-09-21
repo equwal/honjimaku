@@ -3,14 +3,26 @@
 {% block css %}
 <link rel="stylesheet" href="/static/help.css" type="text/css">
 <meta property="og:url" content='{{ "/help"|canonical_url }}'>
-<meta property="og:title" content="Jimaku: Help">
+<meta property="og:title" content="{{ crate::CONFIG.get().unwrap().site_name }}: Help">
 {% endblock %}
 
 {% block title %}
-Help · Jimaku
+Help · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block sidebar %}
+{%- if crate::CONFIG.get().unwrap().book_site %}
+<section class="sidebar grid-item">
+  <h3>Table of Contents</h3>
+  <ul>
+    <li><a href="#find">Find subtitles</a></li>
+    <li><a href="#use">Use them</a></li>
+    <li><a href="#make">Make them</a></li>
+    <li><a href="#share">Share them</a></li>
+    <li><a href="#rules">What an upload must be</a></li>
+  </ul>
+</section>
+{%- else %}
 <section class="sidebar grid-item">
   <h3>Table of Contents</h3>
   <ul>
@@ -49,9 +61,49 @@ Help · Jimaku
     </li>
   </ul>
 </section>
+{%- endif %}
 {% endblock %}
 
 {% block body %}
+{%- if crate::CONFIG.get().unwrap().book_site %}
+<div id="content">
+  <h1 id="find">Find subtitles</h1>
+  <p>Each entry is one audiobook. Type a part of the title in the search box on the front page. An entry with
+    "unverified" beside it was added by a user, and no editor has looked at it yet.</p>
+
+  <h1 id="use">Use them</h1>
+  <p>The files are <code>.srt</code> subtitles whose times fit the audiobook: each line says when the narrator reads it.
+    Readers with a read-along mode (Hoshi Reader, for example) take the <code>.srt</code> beside the ebook and
+    follow the narration. A video player shows them over the audio like any subtitles.</p>
+  <p>The times fit one recording. Another edition of the audiobook (another narrator, another shop) has other times.</p>
+
+  <h1 id="make">Make them</h1>
+  <p><a href="https://subread.space">subread.space</a> makes such subtitles from an audiobook and its ebook, free, in your
+    browser, and there is an Android app that does the same. The words come from the book, so names and spelling are right.</p>
+
+  <h1 id="share">Share them</h1>
+  <ol>
+    <li>Make an account (Login, then Register). A user name and a password are all it takes.</li>
+    <li>Search for the book. If it is here, open it and press Upload.</li>
+    <li>If it is not, press the upload button on the front page and add the book: the title as the audiobook shop writes it,
+      and the ID of the audiobook if there is one (an Audible ASIN such as <code>B0BPXSSWVF</code>, an audiobook.jp number).
+      Then upload to the new entry.</li>
+  </ol>
+  <p>subread.space can send the file here by itself: generate an API key on your <a href="/account">account page</a> and
+    paste it there once.</p>
+  <p>Subtitles hold the words of the book. Share them only if you may.</p>
+
+  <h1 id="rules">What an upload must be</h1>
+  <p>The server reads each file, and says what is wrong when it refuses one:</p>
+  <ul>
+    <li><code>.srt</code>, <code>.vtt</code>, <code>.ass</code>, or a <code>.zip</code> that holds only such files;</li>
+    <li>UTF-8 text (not Shift_JIS, not UTF-16);</li>
+    <li>the subtitles of a whole audiobook: at least 30 lines and 10 minutes;</li>
+    <li>times that make sense: each line ends after it starts, and the lines are in order;</li>
+    <li>text that fits its times (not a page of text in one line), in the language of this site.</li>
+  </ul>
+</div>
+{%- else %}
 <div id="content">
   <h1 id="using-the-site">Using the Site</h1>
   <p>
@@ -288,5 +340,6 @@ Help · Jimaku
     </ul>
   </p>
 </div>
+{%- endif %}
 {% endblock %}
 

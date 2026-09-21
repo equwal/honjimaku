@@ -8,7 +8,7 @@
 {% endblock %}
 
 {% block title %}
-{{ user_name }}'s AniList · Jimaku
+{{ user_name }}'s AniList · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block body %}

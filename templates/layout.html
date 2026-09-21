@@ -3,13 +3,13 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Jimaku{% endblock %}</title>
+    <title>{% block title %}{{ crate::CONFIG.get().unwrap().site_name }}{% endblock %}</title>
     <link rel="apple-touch-icon" sizes="180x180" href="/static/icons/apple-touch-icon.png">
     <link rel="icon" type="image/png" sizes="32x32" href="/static/icons/favicon-32x32.png">
     <link rel="icon" type="image/png" sizes="16x16" href="/static/icons/favicon-16x16.png">
     <link rel="manifest" href="/site.webmanifest">
     <meta name="theme-color" content="#c4a058">
-    <meta property="og:site_name" content="Jimaku">
+    <meta property="og:site_name" content="{{ crate::CONFIG.get().unwrap().site_name }}">
     <link rel="stylesheet" href="/static/base.css" type="text/css" />
     {% block css %}{% endblock %}
   </head>
@@ -17,7 +17,7 @@
     <div class="grid">
       <header class="grid-item">
         <nav class="main-navigation">
-          <a class="nav-item branding" href="/">Jimaku</a>
+          <a class="nav-item branding" href="/">{{ crate::CONFIG.get().unwrap().site_name }}</a>
           <div class="nav-item mobile-only">
             <input id="hamburger-toggle" type="checkbox" aria-label="Open menu" />
             <label class="hamburger-menu" aria-hidden="true" for="hamburger-toggle">
@@ -27,8 +27,12 @@
           </div>
           <div class="hamburger-menu-container">
             {% block index_nav %}
+            {%- if crate::CONFIG.get().unwrap().book_site %}
+            <a class="nav-item" href="/">Books</a>
+            {%- else %}
             <a class="nav-item" href="/">Anime</a>
             <a class="nav-item" href="/dramas">Live Action</a>
+            {%- endif %}
             {% endblock %}
             {% if let Some(account) = account %}
             {% if let Some(username) = account.anilist_username.as_ref() %}
@@ -107,8 +111,10 @@
           <a href="/api/docs">API</a>
           <a href="/contact">Contact</a>
           <a href="/backup">Backup</a>
-          <a href="https://github.com/Rapptz/jimaku">GitHub</a>
+          <a href="{{ crate::CONFIG.get().unwrap().source_url }}">GitHub</a>
+          {%- if !crate::CONFIG.get().unwrap().book_site %}
           <a href="https://discord.gg/xtEBbH75ph">Discord</a>
+          {%- endif %}
         </div>
         {% block footer %}{% endblock %}
       </footer>

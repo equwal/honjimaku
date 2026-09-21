@@ -2,11 +2,11 @@
 
 {% block css %}
 <meta property="og:url" content='{{ "/contact"|canonical_url }}'>
-<meta property="og:title" content="Jimaku: Contact">
+<meta property="og:title" content="{{ crate::CONFIG.get().unwrap().site_name }}: Contact">
 {% endblock %}
 
 {% block title %}
-Contact · Jimaku
+Contact · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block body %}
@@ -14,12 +14,24 @@ Contact · Jimaku
   <h1 id="contact-us">Contact us</h1>
   <p>If you need help, want to report a bug or request a feature, please don't hesitate to contact us.</p>
   <p>
+    {%- if crate::CONFIG.get().unwrap().book_site %}
+    {# A site of its own has its own contacts. The ones below are those of the Jimaku project. #}
+    <ul>
+      {%- for email in crate::CONFIG.get().unwrap().contact_emails %}
+      <li><a href="mailto:{{ email }}">{{ email }}</a></li>
+      {%- endfor %}
+      <li><a href="{{ crate::CONFIG.get().unwrap().source_url }}/issues">Report a bug on GitHub</a>.</li>
+    </ul>
+    <p>If subtitles here are of a work whose rights you hold and you want them removed, write to the
+      address above with the title and the address of the page. They are removed when the notice is checked.</p>
+    {%- else %}
     <ul>
       <li><a href="mailto:support@jimaku.cc">Email Us</a>.</li>
       <li><a href="https://github.com/Rapptz/jimaku">GitHub</a>.</li>
       <li><a href="https://discord.gg/xtEBbH75ph">Discord</a>.
       </li>
     </ul>
+    {%- endif %}
   <p>
 </div>
 {% endblock %}

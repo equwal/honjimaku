@@ -12,13 +12,25 @@ fn generate_opensearch_xml(state: &AppState, anime: bool) -> Response {
     let base_url = state.config().canonical_url();
     let suggestions_url = format!("{base_url}/opensearch/suggest?anime={anime}&amp;query={{searchTerms}}",);
 
-    let search_kind = if anime { "Anime" } else { "Drama" };
+    let site = &state.config().site_name;
+    let search_kind = if state.config().book_site {
+        "Book"
+    } else if anime {
+        "Anime"
+    } else {
+        "Drama"
+    };
+    let about = if state.config().book_site {
+        "subtitles for audiobooks"
+    } else {
+        "Japanese Subtitles"
+    };
 
     let xml = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
-    <ShortName>Jimaku {search_kind} Search</ShortName>
-    <Description>Jimaku: Japanese Subtitles</Description>
+    <ShortName>{site} {search_kind} Search</ShortName>
+    <Description>{site}: {about}</Description>
     <Image height="48" width="48" type="image/x-icon">{base_url}/favicon.ico</Image>
     <Url type="text/html" method="get" template="{base_url}/opensearch/redirect?anime={anime}&amp;query={{searchTerms}}" />
     <Url type="application/x-suggestions+json" template="{suggestions_url}" />

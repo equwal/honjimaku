@@ -31,6 +31,13 @@ pub struct Config {
     /// make an entry from a title alone. Such an entry is unverified until an editor looks.
     #[serde(default)]
     pub book_site: bool,
+    /// The name of the site, as its pages show it.
+    #[serde(default = "default_site_name")]
+    pub site_name: String,
+    /// Where the source code of this server is. The licence (AGPL) asks that each
+    /// visitor can get the source of what runs, so a changed server names its own.
+    #[serde(default = "default_source_url")]
+    pub source_url: String,
     /// The contact emails for Let's Encrypt.
     ///
     /// Required for production use. Do not prefix this with e.g. `mailto`.
@@ -65,6 +72,14 @@ pub struct Config {
     pub secret_key: SecretKey,
 }
 
+fn default_site_name() -> String {
+    "Jimaku".to_owned()
+}
+
+fn default_source_url() -> String {
+    "https://github.com/Rapptz/jimaku".to_owned()
+}
+
 impl Config {
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
@@ -73,6 +88,8 @@ impl Config {
             subtitle_path: std::env::current_dir().expect("could not get current working directory"),
             subtitle_language: None,
             book_site: false,
+            site_name: default_site_name(),
+            source_url: default_source_url(),
             domains: Vec::new(),
             contact_emails: Vec::new(),
             tmdb_api_key: String::new(),

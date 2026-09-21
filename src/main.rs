@@ -108,7 +108,9 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     let request_logger = state.requests.clone();
     let notifications = state.notifications.clone();
     // The scrapers bring in anime and drama subtitles from other sites. A site for books has no use for them.
-    if !state.config().book_site {
+    if state.config().book_site {
+        tokio::spawn(jimaku::sync::sync_loop(state.clone()));
+    } else {
         tokio::spawn(jimaku::kitsunekko::auto_scrape_loop(state.clone()));
         tokio::spawn(jimaku::jpsubbers::auto_scrape_loop(state.clone()));
     }

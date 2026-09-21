@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 
 {% block title %}
-Error · Jimaku
+Error · {{ crate::CONFIG.get().unwrap().site_name }}
 {% endblock %}
 
 {% block body %}

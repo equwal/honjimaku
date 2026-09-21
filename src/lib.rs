@@ -27,6 +27,7 @@ pub mod relations;
 pub mod routes;
 mod state;
 pub mod subcheck;
+pub mod sync;
 pub mod tmdb;
 pub mod token;
 pub mod trash;
