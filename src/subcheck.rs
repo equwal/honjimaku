@@ -1,4 +1,4 @@
-//! The check that an uploaded file is a set of subtitles for an audiobook.
+//! The check that an uploaded file is a set of subtitles for a whole recording: an audiobook, an episode.
 //!
 //! An upload used to pass when its file name ended in `.srt`. Anything could
 //! be behind that name: an empty file, a web page, subtitles of a 24-minute
@@ -9,7 +9,7 @@
 
 use std::fmt;
 
-/// An audiobook is long. A file shorter than this is something else.
+/// A book or an episode is long. A file shorter than this is a sample, or something else.
 const MIN_DURATION_SECONDS: f64 = 10.0 * 60.0;
 const MIN_CUES: usize = 30;
 /// A book of 40 hours is about 6 MB of subtitles.
@@ -120,7 +120,7 @@ pub fn check(bytes: &[u8], format: Format, script: Script) -> Result<Summary, Re
         return refuse("The file is empty.");
     }
     if bytes.len() > MAX_BYTES {
-        return refuse("The file is larger than 25 MB, which is more than the subtitles of any book.");
+        return refuse("The file is larger than 25 MB, which is more than any subtitles.");
     }
     if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
         return refuse("The file is UTF-16. Save it as UTF-8 and upload it again.");
@@ -153,7 +153,7 @@ pub fn check(bytes: &[u8], format: Format, script: Script) -> Result<Summary, Re
     }
     if cues.len() < MIN_CUES {
         problems.push(format!(
-            "The file has {} lines. The subtitles of an audiobook have many more.",
+            "The file has {} lines. A whole book or episode has many more.",
             cues.len()
         ));
     }
@@ -164,7 +164,7 @@ pub fn check(bytes: &[u8], format: Format, script: Script) -> Result<Summary, Re
     let duration = cues.iter().map(|c| c.end).fold(0.0, f64::max);
     if duration < MIN_DURATION_SECONDS {
         problems.push(format!(
-            "The subtitles end at {:.0} minutes. An audiobook is longer: is this the whole book?",
+            "The subtitles end at {:.0} minutes. Is this the whole recording?",
             duration / 60.0
         ));
     }
