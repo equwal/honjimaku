@@ -90,7 +90,7 @@ pub fn join_iter<T: ToString>(sep: impl AsRef<str>, mut iter: impl Iterator<Item
 
 /// Returns the directory where logs are stored
 pub fn logs_directory() -> PathBuf {
-    dirs::state_dir()
+    dir_or_home(dirs::state_dir(), "state")
         .map(|p| p.join(crate::PROGRAM_NAME))
         .unwrap_or_else(|| PathBuf::from("./logs"))
 }
@@ -272,3 +272,13 @@ macro_rules! sql_json_bridge {
 }
 
 pub(crate) use sql_json_bridge;
+
+/// Where the server keeps its files. With `JIMAKU_HOME` set, the config, the database, the
+/// cache and the logs are all below that directory, and the directories of the user are
+/// not touched: for two sites on one machine, and for a test server beside a real one.
+pub fn dir_or_home(default: Option<std::path::PathBuf>, kind: &str) -> Option<std::path::PathBuf> {
+    match std::env::var_os("JIMAKU_HOME") {
+        Some(home) if !home.is_empty() => Some(std::path::Path::new(&home).join(kind)),
+        _ => default,
+    }
+}

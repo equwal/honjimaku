@@ -294,6 +294,12 @@ pub struct CreatePayload {
     /// This is only available for API keys bound to editor users.
     #[serde(default, with = "crate::models::expand_flags::option")]
     flags: Option<EntryFlags>,
+    /// On a site for books: the identifier of the audiobook (an Audible ASIN, an audiobook.jp number).
+    ///
+    /// On such a site each user may give `name`, the title of the book. If the site has
+    /// a book with that title already, its entry is returned and nothing is made.
+    #[serde(default)]
+    book_id: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -340,13 +346,41 @@ pub async fn create_entry(
     };
     let anilist_id = payload.anilist_id;
     let tmdb_id = payload.tmdb_id;
+    // On a site for books each user may name a new entry. The other fields stay with editors.
+    let may_name = account.flags.is_editor() || state.config().book_site;
     if !account.flags.is_editor()
-        && (payload.name.is_some()
+        && ((payload.name.is_some() && !may_name)
             || payload.japanese_name.is_some()
             || payload.english_name.is_some()
             || payload.flags.is_some())
     {
         return Err(ApiError::forbidden());
+    }
+
+    if state.config().book_site && anilist_id.is_none() && tmdb_id.is_none() && payload.flags.is_none() {
+        if let Some(name) = &payload.name {
+            let title = crate::book::clean_title(name).map_err(ApiError::new)?;
+            let key = crate::book::title_key(&title);
+            let existing = state
+                .directory_entries()
+                .await
+                .iter()
+                .find(|e| !key.is_empty() && crate::book::directory_key(&e.name) == key)
+                .map(|e| e.id);
+            let entry_id = match existing {
+                Some(id) => id,
+                None => {
+                    let pending = PendingDirectoryEntry {
+                        name: Some(title),
+                        book_id: payload.book_id,
+                        anime: true,
+                        ..Default::default()
+                    };
+                    raw_create_directory_entry(&state, account, pending, true).await?.0
+                }
+            };
+            return Ok(Json(CreateEntryResult { entry_id }));
+        }
     }
 
     let flags = if payload.flags.is_none() && payload.name.is_some() {

@@ -7,7 +7,7 @@ use askama::Template;
 use axum::{
     extract::State,
     http::{
-        header::{AUTHORIZATION, USER_AGENT},
+        header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
         Method,
     },
     routing::{get, post},
@@ -101,6 +101,7 @@ pub fn routes() -> Router<AppState> {
                 .allow_methods([Method::GET, Method::POST])
                 .allow_credentials(true)
                 .allow_origin(AllowOrigin::mirror_request())
-                .allow_headers([AUTHORIZATION, USER_AGENT]),
+                // Content-Type: a page on another site (subread.space) sends JSON to make an entry.
+                .allow_headers([AUTHORIZATION, USER_AGENT, CONTENT_TYPE]),
         )
 }

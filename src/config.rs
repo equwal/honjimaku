@@ -23,6 +23,14 @@ pub struct Config {
     ///
     /// Note that due to zipping being a significant use case, S3 storage is not used.
     pub subtitle_path: PathBuf,
+    /// The language of the site: "ja" or "zh". An uploaded subtitle file must be in it.
+    /// Without it, any language passes.
+    #[serde(default)]
+    pub subtitle_language: Option<String>,
+    /// True on a site for books. A book has no AniList or TMDB page, so each user may
+    /// make an entry from a title alone. Such an entry is unverified until an editor looks.
+    #[serde(default)]
+    pub book_site: bool,
     /// The contact emails for Let's Encrypt.
     ///
     /// Required for production use. Do not prefix this with e.g. `mailto`.
@@ -63,6 +71,8 @@ impl Config {
             production: false,
             lets_encrypt_production: false,
             subtitle_path: std::env::current_dir().expect("could not get current working directory"),
+            subtitle_language: None,
+            book_site: false,
             domains: Vec::new(),
             contact_emails: Vec::new(),
             tmdb_api_key: String::new(),
@@ -74,7 +84,8 @@ impl Config {
     }
 
     pub fn path() -> anyhow::Result<PathBuf> {
-        let mut path = dirs::config_dir().context("could not find a config directory for the current user")?;
+        let mut path = crate::utils::dir_or_home(dirs::config_dir(), "config")
+            .context("could not find a config directory for the current user")?;
         path.push(PROGRAM_NAME);
         path.push("config.json");
         Ok(path)

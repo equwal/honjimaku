@@ -157,7 +157,7 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
 
     // Production server stuff
     if addr.port() == 443 {
-        let cache_dir = dirs::cache_dir()
+        let cache_dir = jimaku::utils::dir_or_home(dirs::cache_dir(), "cache")
             .map(|p| p.join(jimaku::PROGRAM_NAME).join("rustls_acme_cache"))
             .context("Could not find appropriate cache location for ACME")?;
         let mut state = AcmeConfig::new(config.domains)

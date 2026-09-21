@@ -1,6 +1,7 @@
 pub mod anilist;
 pub mod audit;
 pub mod auth;
+pub mod book;
 pub mod borrowed;
 pub mod buzzheavier;
 pub mod cached;
@@ -25,6 +26,7 @@ pub mod ratelimit;
 pub mod relations;
 pub mod routes;
 mod state;
+pub mod subcheck;
 pub mod tmdb;
 pub mod token;
 pub mod trash;

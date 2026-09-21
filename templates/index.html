@@ -57,6 +57,18 @@
 
 <dialog id="upload-modal">
   <form method="post" action="/entry/create" autocomplete="off">
+    {%- if crate::CONFIG.get().unwrap().book_site -%}
+    <h1>Add a book</h1>
+    <div class="form-container">
+      <label for="directory-name">Title of the book, as the audiobook shop writes it</label>
+      <input class="form-field" name="name" id="directory-name" required maxlength="200"
+             placeholder="吾輩は猫である" autocomplete="off" type="text">
+      <label for="book-id">Audiobook ID, if there is one (Audible ASIN, audiobook.jp number)</label>
+      <input class="form-field" name="book_id" id="book-id" maxlength="40" pattern="[A-Za-z0-9 ._\-]*"
+             placeholder="B0BPXSSWVF" autocomplete="off" type="text">
+      <input type="hidden" name="anime" value="true">
+    </div>
+    {%- else -%}
     <h1>Create folder</h1>
     <div class="form-container">
       {%- if anime -%}
@@ -78,6 +90,7 @@
       {% endif %}
       <input type="hidden" name="anime" value="{{ anime }}">
     </div>
+    {%- endif -%}
     <footer>
       <button id="confirm-upload" class="button primary">Create</button>
       <button class="button" formmethod="dialog">Cancel</button>

@@ -6,6 +6,7 @@ use crate::flash::{FlashMessage, Flasher, Flashes};
 use crate::headers::Referrer;
 use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Report, ReportPayload};
 use crate::ratelimit::RateLimit;
+use crate::subcheck::{self, Script};
 use crate::utils::{is_over_length, HtmlPage, FRAGMENT};
 use crate::{audit, filters};
 use crate::{tmdb, AppState};
@@ -26,7 +27,7 @@ use axum::{
 use percent_encoding::percent_encode;
 use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 use tokio::task::JoinSet;
@@ -146,12 +147,17 @@ struct CreateDirectoryEntry {
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     #[serde(default)]
     name: Option<String>,
+    /// On a site for books: the identifier of the audiobook (an Audible ASIN, an audiobook.jp number).
+    #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
+    #[serde(default)]
+    book_id: Option<String>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
 }
 
 #[derive(Debug, Default)]
 pub struct PendingDirectoryEntry {
+    pub book_id: Option<String>,
     pub anilist_id: Option<u32>,
     pub tmdb_id: Option<tmdb::Id>,
     pub name: Option<String>,
@@ -167,6 +173,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
             anilist_id: value.anilist_url.as_deref().and_then(crate::utils::get_anilist_id),
             tmdb_id: value.tmdb_url.as_deref().and_then(tmdb::get_tmdb_id),
             name: value.name,
+            book_id: value.book_id,
             anime: value.anime,
             notes: None,
             titles: None,
@@ -224,6 +231,8 @@ impl PendingDirectoryEntry {
             sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
         } else if let Some(id) = self.tmdb_id {
             sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
+        } else if let Some(id) = &self.book_id {
+            sanitise_file_name::sanitise(&format!("{name} [{id}]"))
         } else {
             // Avoid the extra allocation if possible
             if anime {
@@ -249,12 +258,45 @@ pub async fn raw_create_directory_entry(
         return Err(ApiError::new("Account is restricted from uploading").with_code(ApiErrorCode::NoPermissions));
     }
 
+    let mut pending = pending;
+    let book_site = state.config().book_site;
+    if book_site && pending.anilist_id.is_none() && pending.tmdb_id.is_none() && pending.titles.is_none() {
+        // A book: the user names it. Say so if the site has it already, so that the
+        // subtitles of one book do not end up in two places.
+        let title = crate::book::clean_title(pending.name.as_deref().unwrap_or("")).map_err(ApiError::new)?;
+        if let Some(id) = pending.book_id.take() {
+            pending.book_id = Some(crate::book::clean_book_id(&id).map_err(ApiError::new)?);
+        }
+        let key = crate::book::title_key(&title);
+        if key.is_empty() {
+            return Err(ApiError::new("Give the title of the book."));
+        }
+        let entries = state.directory_entries().await;
+        if let Some(same) = entries.iter().find(|e| crate::book::directory_key(&e.name) == key) {
+            return Err(ApiError::new(format!(
+                "This book is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
+                same.name, same.id
+            ))
+            .with_code(ApiErrorCode::EntryAlreadyExists));
+        }
+        pending.name = Some(title);
+        pending.anime = true; // the listing on the front page
+        if pending.notes.is_none() {
+            pending.notes = Some(match &pending.book_id {
+                Some(id) => format!("It is a book. Audiobook: {id}"),
+                None => "It is a book".to_owned(),
+            });
+        }
+    }
+
     let (names, flags) = match pending.get_info(state).await? {
         Some(title) => title,
-        None if account.flags.is_editor() => {
+        None if account.flags.is_editor() || book_site => {
             if let Some(name) = pending.name.clone() {
                 let mut flags = EntryFlags::new();
                 flags.set_anime(pending.anime);
+                // An editor has looked at what an editor makes. Nobody has looked at the rest yet.
+                flags.set_unverified(!account.flags.is_editor());
                 (MediaTitle::new(name), flags)
             } else {
                 return Err(ApiError::new("Missing name, anilist_id, or tmdb_id for directory."));
@@ -671,6 +713,7 @@ async fn move_directory_entries(
                 &state,
                 account.clone(),
                 PendingDirectoryEntry {
+                    book_id: None,
                     anilist_id: payload.anilist_id,
                     tmdb_id: payload.tmdb_id,
                     name: payload.name.clone(),
@@ -1012,29 +1055,83 @@ impl PendingFileEntry {
 struct ProcessedFiles {
     files: Vec<ProcessedFile>,
     skipped: usize,
+    /// Why each skipped file was skipped, for the uploader to read.
+    problems: Vec<String>,
+}
+
+/// The members of a zip are checked like files uploaded one by one. A zip may hold
+/// subtitle files only, so that nothing else gets onto the site inside one.
+fn verify_zip(bytes: &[u8], script: Script) -> anyhow::Result<()> {
+    const MAX_MEMBERS: usize = 500;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))?;
+    if archive.len() > MAX_MEMBERS {
+        bail!("the zip holds more than {MAX_MEMBERS} files");
+    }
+    let mut subtitles = 0;
+    for index in 0..archive.len() {
+        let member = archive.by_index(index)?;
+        if member.is_dir() {
+            continue;
+        }
+        let name = member.name().to_owned();
+        let extension = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        match subcheck::Format::from_extension(&extension) {
+            Some(format) => {
+                // Read one byte past the limit: enough to know that it is too large, and no more.
+                let mut contents = Vec::new();
+                member.take(subcheck::MAX_BYTES as u64 + 1).read_to_end(&mut contents)?;
+                if let Err(why) = subcheck::check(&contents, format, script) {
+                    bail!("{name} in the zip: {why}");
+                }
+                subtitles += 1;
+            }
+            None if matches!(extension.as_str(), "sub" | "sup" | "idx") => subtitles += 1,
+            None => bail!("{name} in the zip is not a subtitle file"),
+        }
+    }
+    if subtitles == 0 {
+        bail!("the zip holds no subtitle files");
+    }
+    Ok(())
 }
 
 async fn verify_file(
     entry_path: &std::path::Path,
     file_name: PathBuf,
     field: Field<'_>,
+    script: Script,
 ) -> anyhow::Result<ProcessedFile> {
-    match file_name.extension().and_then(|ext| ext.to_str()) {
-        Some("srt" | "ass" | "ssa" | "zip" | "sub" | "sup" | "idx" | "7z") => {
+    let extension = file_name
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some(ext @ ("srt" | "vtt" | "ass" | "ssa" | "zip" | "sub" | "sup" | "idx" | "7z")) => {
             let path = entry_path.join(file_name);
             if path.exists() {
-                bail!("filename already exists")
+                bail!("a file with this name is already there")
             }
             let bytes = field.bytes().await?;
+            // The name says what the file claims to be. The contents say what it is.
+            if let Some(format) = subcheck::Format::from_extension(ext) {
+                subcheck::check(&bytes, format, script)?;
+            } else if ext == "zip" {
+                verify_zip(&bytes, script)?;
+            }
             Ok(ProcessedFile { path, bytes })
         }
-        _ => bail!("invalid file extension"),
+        _ => bail!("not a subtitle file (srt, vtt, ass, ssa, sub, sup, idx, zip, 7z)"),
     }
 }
 
-async fn process_files(entry_path: &std::path::Path, mut multipart: Multipart) -> anyhow::Result<ProcessedFiles> {
+async fn process_files(
+    entry_path: &std::path::Path,
+    mut multipart: Multipart,
+    script: Script,
+) -> anyhow::Result<ProcessedFiles> {
     let mut files = Vec::new();
     let mut skipped = 0;
+    let mut problems = Vec::new();
     while let Some(field) = multipart.next_field().await? {
         let Some(name) = field.file_name().map(sanitise_file_name::sanitise).map(PathBuf::from) else {
             tracing::debug!("Skipped file due to missing filename");
@@ -1042,19 +1139,25 @@ async fn process_files(entry_path: &std::path::Path, mut multipart: Multipart) -
             continue;
         };
 
-        match verify_file(entry_path, name, field).await {
+        let shown = name.display().to_string();
+        match verify_file(entry_path, name, field, script).await {
             Ok(file) => files.push(file),
             Err(e) => {
                 tracing::debug!(error=%e, "Skipped file due to validation issue");
+                problems.push(format!("{shown}: {e}"));
                 skipped += 1
             }
         }
     }
-    Ok(ProcessedFiles { files, skipped })
+    Ok(ProcessedFiles {
+        files,
+        skipped,
+        problems,
+    })
 }
 
 /// The result of an upload operation.
-#[derive(Debug, Clone, Copy, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct UploadResult {
     /// The number of files that did not succeed due to a filesystem error.
     errors: usize,
@@ -1062,6 +1165,8 @@ pub struct UploadResult {
     total: usize,
     /// The number of files that were skipped due to some reason
     skipped: usize,
+    /// Why each skipped file was skipped.
+    problems: Vec<String>,
 }
 
 impl UploadResult {
@@ -1093,12 +1198,19 @@ pub async fn raw_upload_file(
         return Err(ApiError::not_found("Entry not found"));
     };
 
-    let Ok(processed) = process_files(&entry, multipart).await else {
+    let script = Script::from_code(state.config().subtitle_language.as_deref().unwrap_or(""));
+    let Ok(processed) = process_files(&entry, multipart, script).await else {
         return Err(ApiError::new("Internal error when processing files").with_code(ApiErrorCode::ServerError));
     };
 
     if processed.files.is_empty() {
-        return Err(ApiError::new("Did not upload any files."));
+        if processed.problems.is_empty() {
+            return Err(ApiError::new("Did not upload any files."));
+        }
+        return Err(ApiError::new(format!(
+            "No file was accepted. {}",
+            processed.problems.join(" ")
+        )));
     }
 
     let mut errored = 0usize;
@@ -1157,6 +1269,7 @@ pub async fn raw_upload_file(
         errors: errored,
         total,
         skipped: processed.skipped,
+        problems: processed.problems,
     })
 }
 
@@ -1179,11 +1292,12 @@ async fn upload_file(
     } else {
         let successful = result.successful();
         FlashMessage::warning(format!(
-            "Uploaded {successful} file{}, {} {} skipped and {} failed",
+            "Uploaded {successful} file{}, {} {} skipped and {} failed. {}",
             if successful == 1 { "" } else { "s" },
             result.skipped,
             if result.skipped == 1 { "was" } else { "were" },
             result.errors,
+            result.problems.join(" "),
         ))
     };
     flasher.add(message).bail(&url)
@@ -1501,6 +1615,7 @@ async fn create_imported_entry(
     let mut flags = payload.inner.apply_flags(EntryFlags::new());
     flags.set_anime(query.anime);
     let pending = PendingDirectoryEntry {
+        book_id: None,
         anilist_id: payload.inner.anilist_id,
         tmdb_id: payload.inner.tmdb_id,
         name: None,

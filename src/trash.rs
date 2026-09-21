@@ -48,7 +48,8 @@ fn create_directory(path: &Path) -> anyhow::Result<()> {
 
 impl Trash {
     pub fn new() -> anyhow::Result<Self> {
-        let mut base = dirs::data_dir().context("could not find a data directory for current user")?;
+        let mut base = crate::utils::dir_or_home(dirs::data_dir(), "data")
+            .context("could not find a data directory for current user")?;
         base.push(crate::PROGRAM_NAME);
         create_directory(&base)?;
         let files = base.join("files");
