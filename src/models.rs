@@ -242,6 +242,10 @@ pub struct DirectoryEntry {
     #[schema(example = "B0BPXSSWVF")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub book_id: Option<String>,
+    /// On a site for Chinese shows: the Bangumi (bgm.tv) subject number, verified against Bangumi.
+    #[schema(example = 258207)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bangumi_id: Option<u32>,
     /// Extra notes that the entry might have.
     ///
     /// Supports a limited set of markdown. Can only be set by editors.
@@ -269,6 +273,7 @@ impl Table for DirectoryEntry {
         "anilist_id",
         "tmdb_id",
         "book_id",
+        "bangumi_id",
         "notes",
         "english_name",
         "japanese_name",
@@ -289,6 +294,7 @@ impl Table for DirectoryEntry {
             anilist_id: row.get("anilist_id")?,
             tmdb_id: row.get("tmdb_id")?,
             book_id: row.get("book_id")?,
+            bangumi_id: row.get("bangumi_id")?,
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
@@ -312,6 +318,8 @@ pub struct DirectoryEntryBackup {
     pub tmdb_id: Option<tmdb::Id>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bangumi_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -337,6 +345,8 @@ pub struct DirectoryEntryData<'a> {
     pub tmdb_id: Option<tmdb::Id>,
     /// The identifier of the audiobook, on a site for books.
     pub book_id: &'a Option<String>,
+    /// The Bangumi subject number, on a site for Chinese shows.
+    pub bangumi_id: Option<u32>,
     /// The English name of the entry.
     pub english_name: &'a Option<String>,
     /// The Japanese name of the entry, i.e. with kanji and kana.
@@ -359,6 +369,7 @@ impl DirectoryEntry {
             anilist_id: Default::default(),
             tmdb_id: Default::default(),
             book_id: Default::default(),
+            bangumi_id: Default::default(),
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
@@ -374,6 +385,7 @@ impl DirectoryEntry {
             anilist_id: self.anilist_id,
             tmdb_id: self.tmdb_id,
             book_id: &self.book_id,
+            bangumi_id: self.bangumi_id,
             english_name: &self.english_name,
             japanese_name: &self.japanese_name,
         }
@@ -389,6 +401,7 @@ impl DirectoryEntry {
             anilist_id: self.anilist_id,
             tmdb_id: self.tmdb_id,
             book_id: self.book_id,
+            bangumi_id: self.bangumi_id,
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
@@ -397,7 +410,8 @@ impl DirectoryEntry {
 
     /// Returns an appropriate description for the og:description meta tag
     pub fn description(&self) -> String {
-        let mut base = String::from("Download Japanese subtitles for ");
+        let language = crate::CONFIG.get().map(|c| c.language_label()).unwrap_or("Japanese");
+        let mut base = format!("Download {language} subtitles for ");
         base.push_str(&self.name);
         base.push_str(". ");
         if let Some(english) = self.english_name.as_deref() {
@@ -438,6 +452,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             anilist_id: value.anilist_id,
             tmdb_id: value.tmdb_id,
             book_id: value.book_id,
+            bangumi_id: value.bangumi_id,
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,

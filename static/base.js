@@ -103,6 +103,12 @@ const getTmdbId = (url) => {
   return m == null || m.length !== 3 ? null : { type: m[1], id: parseInt(m[2], 10) };
 }
 
+// A Bangumi (bgm.tv) subject: the number, or the URL of its page.
+const getBangumiId = (url) => {
+  const m = (url ?? '').trim().match(/^(?:https?:\/\/(?:bgm\.tv|bangumi\.tv|chii\.in)\/subject\/)?([0-9]+)\/?(?:[?#].*)?$/);
+  return m == null ? null : parseInt(m[1], 10);
+}
+
 function debounced(func, timeout = 300) {
   let timer;
   return (...args) => {

@@ -151,6 +151,10 @@ struct CreateDirectoryEntry {
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     #[serde(default)]
     book_id: Option<String>,
+    /// On a site for Chinese shows: the Bangumi page or subject number.
+    #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
+    #[serde(default)]
+    bangumi_url: Option<String>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
 }
@@ -158,6 +162,7 @@ struct CreateDirectoryEntry {
 #[derive(Debug, Default)]
 pub struct PendingDirectoryEntry {
     pub book_id: Option<String>,
+    pub bangumi_id: Option<u32>,
     pub anilist_id: Option<u32>,
     pub tmdb_id: Option<tmdb::Id>,
     pub name: Option<String>,
@@ -174,6 +179,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
             tmdb_id: value.tmdb_url.as_deref().and_then(tmdb::get_tmdb_id),
             name: value.name,
             book_id: value.book_id,
+            bangumi_id: value.bangumi_url.as_deref().and_then(crate::bangumi::subject_id),
             anime: value.anime,
             notes: None,
             titles: None,
@@ -183,7 +189,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
 }
 
 impl PendingDirectoryEntry {
-    async fn get_info(&self, state: &AppState) -> anyhow::Result<Option<(MediaTitle, EntryFlags)>> {
+    async fn get_info(&mut self, state: &AppState) -> anyhow::Result<Option<(MediaTitle, EntryFlags)>> {
         if let Some((title, flags)) = self.titles.as_ref().zip(self.flags) {
             return Ok(Some((title.clone(), flags)));
         }
@@ -211,6 +217,24 @@ impl PendingDirectoryEntry {
                     flags.set_movie(id.is_movie());
                     flags.set_adult(info.is_adult());
                     Ok(Some((info.titles(), flags)))
+                } else if let Some(id) = self.bangumi_id {
+                    // A Chinese show: Bangumi names it and says whether it is animated.
+                    let show = crate::bangumi::lookup(&state.client, id)
+                        .await
+                        .with_context(|| "Bangumi did not answer. Try again later.".to_owned())?
+                        .map_err(anyhow::Error::msg)?;
+                    let mut flags = EntryFlags::new();
+                    flags.set_anime(show.animated);
+                    flags.set_adult(show.nsfw);
+                    let title = show.title().to_owned();
+                    let native = (show.name != title).then(|| show.name.clone());
+                    self.notes.get_or_insert_with(|| show.note());
+                    let titles = MediaTitle {
+                        romaji: title,
+                        english: None,
+                        native,
+                    };
+                    Ok(Some((titles, flags)))
                 } else {
                     Ok(None)
                 }
@@ -233,6 +257,8 @@ impl PendingDirectoryEntry {
             sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
         } else if let Some(id) = &self.book_id {
             sanitise_file_name::sanitise(&format!("{name} [{id}]"))
+        } else if let Some(id) = self.bangumi_id {
+            sanitise_file_name::sanitise(&format!("{name} [bgm-{id}]"))
         } else {
             // Avoid the extra allocation if possible
             if anime {
@@ -341,6 +367,23 @@ pub async fn raw_create_directory_entry(
         pending.name = Some(title);
     }
 
+    // One show, one entry: say where it is if the site has it already.
+    if let Some(id) = pending.bangumi_id {
+        let entries = state.directory_entries().await;
+        if let Some(same) = entries.iter().find(|e| e.bangumi_id == Some(id)) {
+            return Err(ApiError::new(format!(
+                "This show is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
+                same.name, same.id
+            ))
+            .with_code(ApiErrorCode::EntryAlreadyExists));
+        }
+    }
+    if state.config().drama_site && pending.bangumi_id.is_none() && !account.flags.is_editor() {
+        return Err(ApiError::new(
+            "Give the Bangumi page of the show (https://bgm.tv/subject/...).",
+        ));
+    }
+
     let (names, flags) = match pending.get_info(state).await? {
         Some(title) => title,
         None if account.flags.is_editor() || book_site => {
@@ -367,8 +410,8 @@ pub async fn raw_create_directory_entry(
     };
 
     let query = r#"
-        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id, bangumi_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id;
     "#;
     let path_string = path_string.to_owned();
@@ -392,6 +435,7 @@ pub async fn raw_create_directory_entry(
                         names.english,
                         names.native,
                         pending.book_id,
+                        pending.bangumi_id,
                     ),
                     |row| row.get("id"),
                 )
@@ -445,6 +489,9 @@ pub async fn raw_create_directory_entry(
             .account(account);
         let alert = if book_site {
             alert.field("Audiobook", book_id.unwrap_or_else(|| String::from("Unknown")))
+        } else if state.config().drama_site {
+            let bangumi = pending.bangumi_id.map(crate::bangumi::url);
+            alert.field("Bangumi", bangumi.unwrap_or_else(|| String::from("Unknown")))
         } else {
             alert
                 .field("Anime", pending.anime)
@@ -497,6 +544,9 @@ struct EditDirectoryEntry {
     /// On a site for books: the identifier of the audiobook. An ASIN is verified against Audible.
     #[serde(default, deserialize_with = "crate::utils::empty_string_is_none")]
     book_id: Option<String>,
+    /// On a site for Chinese shows: the Bangumi page or subject number, verified against Bangumi.
+    #[serde(default, deserialize_with = "bangumi_id_or_url")]
+    bangumi_id: Option<u32>,
     #[serde(default)]
     unverified: bool,
     #[serde(default)]
@@ -564,6 +614,19 @@ where
     }
 }
 
+fn bangumi_id_or_url<'de, D>(de: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<String>::deserialize(de)?;
+    match opt.as_deref() {
+        None | Some("") => Ok(None),
+        Some(s) => crate::bangumi::subject_id(s)
+            .ok_or_else(|| serde::de::Error::custom("Invalid Bangumi subject number or URL provided"))
+            .map(Some),
+    }
+}
+
 fn tmdb_url<'de, D>(de: D) -> Result<Option<tmdb::Id>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -627,6 +690,17 @@ async fn edit_directory_entry(
             },
         };
     }
+    // A new Bangumi subject must be one that Bangumi knows.
+    if let Some(id) = payload.bangumi_id.filter(|id| entry.bangumi_id != Some(*id)) {
+        match crate::bangumi::lookup(&state.client, id).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(why)) => return flasher.add(why).bail(&url),
+            Err(e) => {
+                tracing::warn!(error = %e, id, "Bangumi did not answer");
+                return flasher.add("Bangumi did not answer. Try again later.").bail(&url);
+            }
+        }
+    }
 
     // maybe refactor this?
     let mut columns = Vec::with_capacity(11);
@@ -669,6 +743,12 @@ async fn edit_directory_entry(
         audit_data.before.book_id = entry.book_id;
         audit_data.after.book_id = payload.book_id.clone();
         params.push(Box::new(payload.book_id));
+    }
+    if entry.bangumi_id != payload.bangumi_id {
+        columns.push("bangumi_id");
+        audit_data.before.bangumi_id = entry.bangumi_id;
+        audit_data.after.bangumi_id = payload.bangumi_id;
+        params.push(Box::new(payload.bangumi_id));
     }
     if entry.notes != payload.notes {
         columns.push("notes");
@@ -729,6 +809,8 @@ struct SearchQueryParams {
     #[serde(default)]
     book_id: Option<String>,
     #[serde(default)]
+    bangumi_id: Option<u32>,
+    #[serde(default)]
     name: Option<String>,
 }
 
@@ -746,7 +828,12 @@ async fn search_directory_entries(
         return Err(ApiError::forbidden());
     }
 
-    if params.anilist_id.is_none() && params.name.is_none() && params.tmdb_id.is_none() && params.book_id.is_none() {
+    if params.anilist_id.is_none()
+        && params.name.is_none()
+        && params.tmdb_id.is_none()
+        && params.book_id.is_none()
+        && params.bangumi_id.is_none()
+    {
         return Err(ApiError::new("Missing search parameter"));
     }
 
@@ -764,8 +851,8 @@ async fn search_directory_entries(
     let entry = state
         .database()
         .get_row(
-            "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR book_id = ? OR name = ? OR path = ?",
-            (params.anilist_id, params.tmdb_id, book_id, params.name, path),
+            "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR book_id = ? OR bangumi_id = ? OR name = ? OR path = ?",
+            (params.anilist_id, params.tmdb_id, book_id, params.bangumi_id, params.name, path),
             |row| row.get(0),
         )
         .await
@@ -784,6 +871,8 @@ struct MoveDirectoryEntries {
     tmdb_id: Option<tmdb::Id>,
     #[serde(default)]
     book_id: Option<String>,
+    #[serde(default)]
+    bangumi_id: Option<u32>,
     #[serde(default)]
     name: Option<String>,
     #[serde(default)]
@@ -826,6 +915,7 @@ async fn move_directory_entries(
                 account.clone(),
                 PendingDirectoryEntry {
                     book_id: payload.book_id.clone(),
+                    bangumi_id: payload.bangumi_id,
                     anilist_id: payload.anilist_id,
                     tmdb_id: payload.tmdb_id,
                     name: payload.name.clone(),
@@ -1728,6 +1818,7 @@ async fn create_imported_entry(
     flags.set_anime(query.anime);
     let pending = PendingDirectoryEntry {
         book_id: None,
+        bangumi_id: payload.inner.bangumi_id,
         anilist_id: payload.inner.anilist_id,
         tmdb_id: payload.inner.tmdb_id,
         name: None,

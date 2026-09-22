@@ -31,6 +31,9 @@ pub struct Config {
     /// make an entry from a title alone. Such an entry is unverified until an editor looks.
     #[serde(default)]
     pub book_site: bool,
+    /// True on a site for dramas only. There is one listing, and TMDB verifies each entry.
+    #[serde(default)]
+    pub drama_site: bool,
     /// The name of the site, as its pages show it.
     #[serde(default = "default_site_name")]
     pub site_name: String,
@@ -81,6 +84,20 @@ fn default_source_url() -> String {
 }
 
 impl Config {
+    /// A site for books or for dramas has one listing, not an anime and a live action one.
+    pub fn single_listing(&self) -> bool {
+        self.book_site || self.drama_site
+    }
+
+    /// The language of the subtitles, as the pages name it.
+    pub fn language_label(&self) -> &'static str {
+        match self.subtitle_language.as_deref() {
+            Some("zh") => "Chinese",
+            Some("en") => "English",
+            _ => "Japanese",
+        }
+    }
+
     pub fn new() -> anyhow::Result<Self> {
         Ok(Self {
             production: false,
@@ -88,6 +105,7 @@ impl Config {
             subtitle_path: std::env::current_dir().expect("could not get current working directory"),
             subtitle_language: None,
             book_site: false,
+            drama_site: false,
             site_name: default_site_name(),
             source_url: default_source_url(),
             domains: Vec::new(),

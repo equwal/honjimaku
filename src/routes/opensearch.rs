@@ -21,9 +21,9 @@ fn generate_opensearch_xml(state: &AppState, anime: bool) -> Response {
         "Drama"
     };
     let about = if state.config().book_site {
-        "subtitles for audiobooks"
+        String::from("subtitles for audiobooks")
     } else {
-        "Japanese Subtitles"
+        format!("{} Subtitles", state.config().language_label())
     };
 
     let xml = format!(
@@ -42,6 +42,9 @@ fn generate_opensearch_xml(state: &AppState, anime: bool) -> Response {
 }
 
 async fn opensearch_anime(State(state): State<AppState>) -> Response {
+    if state.config().drama_site {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    }
     generate_opensearch_xml(&state, true)
 }
 

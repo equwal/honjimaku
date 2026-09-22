@@ -2,6 +2,7 @@ pub mod anilist;
 pub mod audible;
 pub mod audit;
 pub mod auth;
+pub mod bangumi;
 pub mod book;
 pub mod borrowed;
 pub mod buzzheavier;

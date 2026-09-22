@@ -274,6 +274,9 @@ pub struct CreatePayload {
     #[serde(default)]
     #[schema(pattern = r#"(tv|movie):(\d+)"#, value_type = Option<String>, example = "tv:12345")]
     tmdb_id: Option<tmdb::Id>,
+    /// On a site for Chinese shows: create an entry backed by the given Bangumi subject number.
+    #[serde(default)]
+    bangumi_id: Option<u32>,
     /// Create an entry with the given Romaji name.
     ///
     /// This is only available for API keys bound to editor users.
@@ -408,10 +411,12 @@ pub async fn create_entry(
         None
     };
 
+    let bangumi_id = payload.bangumi_id;
     let pending = PendingDirectoryEntry {
         anime: anilist_id.is_some(),
         anilist_id,
         tmdb_id,
+        bangumi_id,
         titles,
         flags,
         ..Default::default()
@@ -422,8 +427,8 @@ pub async fn create_entry(
         Err(e) if e.code == ApiErrorCode::EntryAlreadyExists => state
             .database()
             .get_row(
-                "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR name = ?",
-                (anilist_id, tmdb_id, payload.name),
+                "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR bangumi_id = ? OR name = ?",
+                (anilist_id, tmdb_id, bangumi_id, payload.name),
                 |row| row.get("id"),
             )
             .await

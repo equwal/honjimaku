@@ -107,10 +107,11 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
 
     let request_logger = state.requests.clone();
     let notifications = state.notifications.clone();
-    // The scrapers bring in anime and drama subtitles from other sites. A site for books has no use for them.
+    // The scrapers bring in Japanese anime and drama subtitles from other sites. A site for
+    // books or for dramas in another language has no use for them.
     if state.config().book_site {
         tokio::spawn(jimaku::sync::sync_loop(state.clone()));
-    } else {
+    } else if !state.config().drama_site {
         tokio::spawn(jimaku::kitsunekko::auto_scrape_loop(state.clone()));
         tokio::spawn(jimaku::jpsubbers::auto_scrape_loop(state.clone()));
     }
@@ -268,12 +269,13 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 5] = [
+const MIGRATIONS: [&str; 6] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
     include_str!("../sql/3.sql"),
     include_str!("../sql/4.sql"),
+    include_str!("../sql/5.sql"),
 ];
 
 fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {

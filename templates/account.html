@@ -64,7 +64,7 @@ My Account · {{ crate::CONFIG.get().unwrap().site_name }}
   {% endif %}
   </div>
 </div>
-{% if (own_page || account.flags.is_admin()) && !crate::CONFIG.get().unwrap().book_site %}
+{% if (own_page || account.flags.is_admin()) && !crate::CONFIG.get().unwrap().single_listing() %}
 <form id="edit-anilist">
   <h3>AniList Integration</h3>
   <p>Save your <a href="https://anilist.co/">AniList</a> username to quickly access your AniList list.</p>

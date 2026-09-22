@@ -292,6 +292,8 @@ pub struct EntrySnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub book_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bangumi_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "crate::models::expand_flags::option")]
     pub flags: Option<EntryFlags>,
 }

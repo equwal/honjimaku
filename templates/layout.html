@@ -29,6 +29,8 @@
             {% block index_nav %}
             {%- if crate::CONFIG.get().unwrap().book_site %}
             <a class="nav-item" href="/">Books</a>
+            {%- else if crate::CONFIG.get().unwrap().drama_site %}
+            <a class="nav-item" href="/">Dramas</a>
             {%- else %}
             <a class="nav-item" href="/">Anime</a>
             <a class="nav-item" href="/dramas">Live Action</a>
@@ -36,7 +38,7 @@
             {% endblock %}
             {% if let Some(account) = account %}
             {% if let Some(username) = account.anilist_username.as_ref() %}
-            {%- if !crate::CONFIG.get().unwrap().book_site %}
+            {%- if !crate::CONFIG.get().unwrap().single_listing() %}
             <a class="nav-item" href="/anilist/{{ username }}">Anime List</a>
             {%- endif %}
             {% endif %}
@@ -114,7 +116,7 @@
           <a href="/contact">Contact</a>
           <a href="/backup">Backup</a>
           <a href="{{ crate::CONFIG.get().unwrap().source_url }}">GitHub</a>
-          {%- if !crate::CONFIG.get().unwrap().book_site %}
+          {%- if !crate::CONFIG.get().unwrap().single_listing() %}
           <a href="https://discord.gg/xtEBbH75ph">Discord</a>
           {%- endif %}
         </div>

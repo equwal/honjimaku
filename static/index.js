@@ -4,10 +4,18 @@ const uploadModal = document.getElementById('upload-modal');
 const confirmUpload = document.getElementById('confirm-upload');
 const anilistUrl = document.getElementById('anilist-url');
 const tmdbUrl = document.getElementById('tmdb-url');
+const bangumiUrl = document.getElementById('bangumi-url');
 
 function checkDuplicate() {
   const dir = document.getElementById('directory-name');
-  if(anilistUrl !== null) {
+  if(bangumiUrl !== null) {
+    let bangumiId = getBangumiId(bangumiUrl.value);
+    return [...document.querySelectorAll('.entry')].find(e => {
+      let id = e.dataset.bangumiId;
+      let name = e.dataset.name;
+      return (id !== undefined && bangumiId !== null && parseInt(id, 10) === bangumiId) || (dir !== null && name === dir.value);
+    });
+  } else if(anilistUrl !== null) {
     let anilistId = getAnilistId(anilistUrl.value);
     return [...document.querySelectorAll('.entry')].find(e => {
       let id = e.dataset.anilistId;

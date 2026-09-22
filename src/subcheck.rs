@@ -229,10 +229,10 @@ fn wrong_script(cues: &[Cue], script: Script) -> Option<String> {
     match script {
         // Japanese text always has kana. Chinese text has none.
         Script::Japanese if share(kana) < 0.20 || share(kana + han) < 0.60 => {
-            Some("The text is not Japanese. This site is for subtitles of Japanese audiobooks.".to_owned())
+            Some("The text is not Japanese. This site is for Japanese subtitles.".to_owned())
         }
         Script::Chinese if share(han) < 0.60 || share(kana) > 0.05 => {
-            Some("The text is not Chinese. This site is for subtitles of Chinese audiobooks.".to_owned())
+            Some("The text is not Chinese. This site is for Chinese subtitles.".to_owned())
         }
         _ => None,
     }

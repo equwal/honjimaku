@@ -9,7 +9,7 @@ use crate::{
 };
 use askama::Template;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{Path, Query, RawQuery, State},
     response::{IntoResponse, Redirect},
     routing::get,
     Extension, Router,
@@ -55,12 +55,14 @@ async fn index(
     let entries = state.directory_entries().await;
     let bypass_cache = account.is_some();
     let editor = account.flags().is_editor();
+    // A site for dramas lists every entry here, and its form asks for a TMDB page.
+    let drama_site = state.config().drama_site;
     let template = ListingTemplate {
         account,
-        entries: entries.iter().filter(|e| e.flags.is_anime()),
+        entries: entries.iter().filter(|e| drama_site || e.flags.is_anime()),
         flashes,
         url: state.config().canonical_url(),
-        anime: true,
+        anime: !drama_site,
         editor,
     };
     cacher.cache_template("index", template, encoding, bypass_cache).await
@@ -71,11 +73,16 @@ async fn dramas(
     account: Option<Account>,
     flashes: Flashes,
     encoding: AcceptEncoding,
+    RawQuery(query): RawQuery,
     Extension(cacher): Extension<BodyCache>,
 ) -> axum::response::Response {
-    // A site for books has one listing.
-    if state.config().book_site {
-        return Redirect::permanent("/").into_response();
+    // A site for books or for dramas has one listing.
+    if state.config().single_listing() {
+        let to = match query {
+            Some(query) => format!("/?{query}"),
+            None => String::from("/"),
+        };
+        return Redirect::permanent(&to).into_response();
     }
     let entries = state.directory_entries().await;
     let bypass_cache = account.is_some();

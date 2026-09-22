@@ -456,6 +456,11 @@ class BulkFilesOperations {
         payload.book_id = bookId;
         params.append('book_id', bookId);
       }
+      let bangumiId = getBangumiId(document.getElementById('bangumi-url')?.value);
+      if (bangumiId !== null) {
+        payload.bangumi_id = bangumiId;
+        params.append('bangumi_id', bangumiId);
+      }
       let name = document.getElementById('directory-name').value;
       if(name) {
         payload.name = name;
@@ -469,7 +474,7 @@ class BulkFilesOperations {
     }
 
     if(Object.keys(payload).length === 1) {
-      showModalAlert(this.moveModal, {level: 'error', content: 'Either a name, an audiobook ID, AniList URL, or TMDB URL is required'});
+      showModalAlert(this.moveModal, {level: 'error', content: 'Either a name, an audiobook ID, a Bangumi page, AniList URL, or TMDB URL is required'});
       return;
     }
 

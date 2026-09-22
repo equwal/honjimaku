@@ -103,7 +103,7 @@ if key:
     check('API: the entry carries book_id and the Audible title, and is verified', got.get('book_id') == 'B01J50DT5S' and got.get('name') == '草枕' and not got.get('flags', {}).get('unverified', True), got)
     r = patient(lambda: api.post(B + '/api/entries', json={'name': 'nothing', 'book_id': 'B0000000XX'}))
     check('API: an ASIN that Audible does not know is refused', r.status_code >= 400 and 'does not know' in r.text, r.text[:200])
-    r = patient(lambda: api.post(B + f'/api/entries/{first}/upload', files=[('file', ('1q84.ja.srt', book(500, '青豆はタクシーの中で音楽を聴いていた。'), 'application/x-subrip'))]))
+    r = patient(lambda: api.post(B + f'/api/entries/{first}/upload', files=[('file', ('kusamakura%d.srt' % random.randrange(10**6), book(500, '山路を登りながら、こう考えた。'), 'application/x-subrip'))]))
     check('API: upload, and the answer carries no problems', r.status_code == 200 and r.json().get('problems') == [], r.text[:200])
     r = patient(lambda: api.post(B + f'/api/entries/{first}/upload', files=[('file', ('bad.srt', b'nothing', 'application/x-subrip'))]))
     check('API: a bad file is refused with the reason', r.status_code >= 400 and 'No subtitle lines' in r.text, r.text[:200])

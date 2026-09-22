@@ -33,7 +33,9 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
         <li><a href="#searching">Searching</a></li>
         <li><a href="#account-management">Account Management</a></li>
         <li><a href="#downloading-files">Downloading Files</a></li>
+        {%- if !crate::CONFIG.get().unwrap().drama_site %}
         <li><a href="#anilist-integration">AniList Integration</a></li>
+        {%- endif %}
         <li><a href="#reporting-files">Reporting Files</a></li>
         <li><a href="#changing-settings">Settings</a></li>
       </ul>
@@ -137,11 +139,18 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   </p>
   <h2 id="searching">Searching</h2>
   <p>
-    On the front page and on an entry's page there is a search bar that allows you to search and filter entries. This search supports any language that the entry has, such as Romaji, English, or Japanese.
+    On the front page and on an entry's page there is a search bar that allows you to search and filter entries. This search supports any language that the entry has, such as Romaji, English, or {{ crate::CONFIG.get().unwrap().language_label() }}.
+    {%- if crate::CONFIG.get().unwrap().drama_site %}
+    Likewise, searching by a Bangumi URL is supported.
+    {%- else %}
     Likewise, searching by an AniList URL is supported.
+    {%- endif %}
   </p>
   <p>
-    The site also supports the <a href="https://developer.mozilla.org/en-US/docs/Web/OpenSearch">OpenSearch specification</a>, allowing you to search the site directly through your browser's address bar. The search is separated for the <a href="/">Anime</a> and <a href="/dramas">Live Action</a> portion of the site.
+    The site also supports the <a href="https://developer.mozilla.org/en-US/docs/Web/OpenSearch">OpenSearch specification</a>, allowing you to search the site directly through your browser's address bar.
+    {%- if !crate::CONFIG.get().unwrap().drama_site %}
+    The search is separated for the <a href="/">Anime</a> and <a href="/dramas">Live Action</a> portion of the site.
+    {%- endif %}
   </p>
   <p>
     To enable OpenSearch powered search, see the documentation for <a href="https://support.mozilla.org/en-US/kb/add-or-remove-search-engine-firefox#w_add-a-search-engine-from-the-address-bar">Firefox</a>. Other browsers might have similar support.
@@ -158,6 +167,7 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <p>
     You can download files by clicking on the link in the file entry. You can also bulk download files by selecting multiple files using the checkbox and then clicking the Download button. This will give you a ZIP file with all the subtitles you selected. You can also Shift click the checkbox to select multiple files in a range.
   </p>
+  {%- if !crate::CONFIG.get().unwrap().drama_site %}
   <h2 id="anilist-integration">AniList Integration</h2>
   <p>
     The site has support for reading a user's <a href="https://anilist.co/">AniList</a> account and having
@@ -172,6 +182,7 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <p>
     It is important to note that your AniList anime list must be public for this feature to work for your account.
   </p>
+  {%- endif %}
   <p>
     If you find yourself repeatedly using this feature, you can save your username to get quick access
     to it later via the navbar by storing it in your <a href="/account">user settings</a> page.
@@ -221,6 +232,17 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
     Dual language files should be suffixed with either <code>[TAG1, TAG2]</code> or <code>.tag1-tag2</code>  to reflect the languages contained in the file. Recommended tags are JPN, CHI, CHS, CHT, ENG, ja, en, and cn.
   </p>
   <h2 id="creating-folders">Creating Folders</h2>
+  {%- if crate::CONFIG.get().unwrap().drama_site %}
+  <p>
+    Creating a folder requires the page of the show on <a href="https://bgm.tv/">Bangumi</a> (bgm.tv), for example <code>https://bgm.tv/subject/258207</code>. The site checks it against Bangumi and takes the names from there. This is necessary to power the search features and overall organization of the site.
+  </p>
+  <p>
+    Bangumi has one subject for each season, so there is one folder per season.
+  </p>
+  <p>
+    If a folder does not exist for that Bangumi subject, feel free to make one before uploading it. Chances are however, that it exists. Use the search bar before making a new folder.
+  </p>
+  {%- else %}
   <p>
     Creating a folder requires the entry to have an AniList ID, backed by an <a href="https://anilist.co">AniList</a> URL. For Live Action entries, this requires a <a href="https://themoviedb.org/">TMDB</a> URL. This is necessary to power the search features and overall organization of the site.
   </p>
@@ -230,6 +252,7 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <p>
     If a folder does not exist for that AniList or TMDB entry, feel free to make one before uploading it. Chances are however, that it exists. Use the search bar before making a new folder.
   </p>
+  {%- endif %}
   <p>
     Users that are editors can create a folder without this requirement, and this requirement is also relaxed for entries created from Kitsunekko.
   </p>

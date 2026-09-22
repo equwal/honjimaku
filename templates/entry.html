@@ -27,6 +27,11 @@
   </div>
   {%- endif %}
   {%- endif %}
+  {%- if let Some(id) = entry.bangumi_id %}
+  <div class="external-links">
+    <a href="{{ crate::bangumi::url(id.clone()) }}" title="Bangumi page for this show">Bangumi {{ id }}</a>
+  </div>
+  {%- endif %}
   {% match entry.anilist_id -%}
     {% when Some with (id) -%}
   <div class="external-links">
@@ -170,6 +175,11 @@
       <input class="form-field" value="{{ entry.book_id|maybe_display }}" maxlength="200"
              placeholder="B0BPXSSWVF" name="book_id" id="entry-book-id" autocomplete="off" type="text">
       <input type="hidden" name="anime" value="true">
+      {%- else if crate::CONFIG.get().unwrap().drama_site %}
+      <label for="entry-bangumi-id">Bangumi subject number or URL (checked against bgm.tv)</label>
+      <input class="form-field" value="{{ entry.bangumi_id|maybe_display }}"
+             placeholder="https://bgm.tv/subject/258207" name="bangumi_id" id="entry-bangumi-id"
+             autocomplete="off" type="text">
       {%- else %}
       <label for="entry-anilist-id">AniList ID or URL</label>
       <input class="form-field" value="{{ entry.anilist_id|maybe_display }}"
@@ -199,12 +209,15 @@
                  name="adult" id="entry-adult" type="checkbox">
           <label for="entry-adult">Adult</label>
         </div>
-        {%- if !crate::CONFIG.get().unwrap().book_site %}
+        {%- if !crate::CONFIG.get().unwrap().single_listing() %}
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_anime() -%}checked{% endif %}
                  name="anime" id="entry-anime" type="checkbox">
           <label for="entry-anime">Anime</label>
         </div>
+        {%- else if crate::CONFIG.get().unwrap().drama_site %}
+        {# One listing: the flag keeps what it has, so that no entry drops out of the list. #}
+        <input type="hidden" name="anime" value="{{ entry.flags.is_anime() }}">
         {%- endif %}
       </div>
       <label for="entry-notes">Notes</label>
@@ -214,7 +227,7 @@
     </div>
     <footer>
       <button id="confirm-edit" class="button primary">Confirm</button>
-      {%- if !crate::CONFIG.get().unwrap().book_site %}
+      {%- if !crate::CONFIG.get().unwrap().single_listing() %}
       <button id="update-info" type="button" class="button" value="sync">Sync</button>
       {%- endif %}
       <button class="button" value="cancel" formmethod="dialog">Cancel</button>
@@ -234,6 +247,16 @@
     <div class="form-container">
       <label for="book-id">Audible ASIN or URL</label>
       <input class="form-field" placeholder="B0BPXSSWVF" name="book_id" id="book-id" maxlength="200"
+             autocomplete="off" type="text">
+    {%- else if crate::CONFIG.get().unwrap().drama_site %}
+    <p>
+      This operation moves the selected files to either a new or pre-existing folder.
+      The entry is found or created by the Bangumi page or by the name. If an entry ID is
+      given then that takes priority.
+    </p>
+    <div class="form-container">
+      <label for="bangumi-url">Bangumi page or subject number</label>
+      <input class="form-field" placeholder="https://bgm.tv/subject/258207" name="bangumi_url" id="bangumi-url"
              autocomplete="off" type="text">
     {%- else %}
     <p>
