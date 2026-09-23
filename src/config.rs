@@ -156,8 +156,10 @@ impl Config {
     }
 
     pub fn canonical_url(&self) -> String {
-        let scheme = if self.server.port == 443 { "https://" } else { "http://" };
         let domain = self.domains.first().map(|x| x.as_str()).unwrap_or("localhost");
+        // A named domain always answers on https, because nginx holds 443 in front
+        // of this server. Only a local test server keeps http and its port.
+        let scheme = if domain == "localhost" { "http://" } else { "https://" };
         let mut url = String::with_capacity(8 + domain.len());
         url.push_str(scheme);
         url.push_str(domain);
