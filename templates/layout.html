@@ -10,6 +10,11 @@
     <link rel="manifest" href="/site.webmanifest">
     <meta name="theme-color" content="#c4a058">
     <meta property="og:site_name" content="{{ crate::CONFIG.get().unwrap().site_name }}">
+    <meta property="og:type" content="website">
+    <meta name="description" content="{% if crate::CONFIG.get().unwrap().book_site %}Subtitles for audiobooks, so that you can read along with a book that you listen to.{% else %}{{ crate::CONFIG.get().unwrap().language_label() }} subtitles for anime and live action shows, uploaded and kept by the people who watch them.{% endif %}">
+    <meta property="og:description" content="{% if crate::CONFIG.get().unwrap().book_site %}Subtitles for audiobooks, so that you can read along with a book that you listen to.{% else %}{{ crate::CONFIG.get().unwrap().language_label() }} subtitles for anime and live action shows, uploaded and kept by the people who watch them.{% endif %}">
+    <meta name="twitter:card" content="summary">
+    <meta property="og:image" content='{{ "/static/icons/android-chrome-512x512.png"|canonical_url }}'>
     <link rel="stylesheet" href="/static/base.css" type="text/css" />
     {% block css %}{% endblock %}
   </head>
