@@ -1,4 +1,5 @@
 use crate::anilist::{self, MediaTitle};
+use crate::bookcheck;
 use crate::database::{is_unique_constraint_violation, Table};
 use crate::download::{validate_path, DownloadResponse};
 use crate::error::{ApiError, ApiErrorCode, InternalError};
@@ -1231,21 +1232,111 @@ async fn bulk_rename_files(
     }))
 }
 
+/// A file that an upload wrote to the staging folder. Drop deletes the file. After
+/// `write_to_disk`, the entry holds a second link to the same data, so the upload stays.
+#[derive(Debug)]
+struct Staged(PathBuf);
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[derive(Debug)]
+enum Contents {
+    /// A subtitle file or a zip: small, so it is kept in memory.
+    Bytes(Bytes),
+    /// A book or an audiobook: too large for memory, so it is on the disk.
+    Staged(Staged),
+}
+
 #[derive(Debug)]
 struct ProcessedFile {
     path: PathBuf,
-    bytes: Bytes,
+    contents: Contents,
+    /// Subtitles that passed `subcheck`. A book or an audiobook needs such a file.
+    passed_subcheck: bool,
+    /// A book or an audiobook.
+    book: bool,
 }
 
 impl ProcessedFile {
     fn write_to_disk(self) -> std::io::Result<()> {
-        let mut fp = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(self.path)?;
-        fp.write_all(&self.bytes)?;
+        match self.contents {
+            Contents::Bytes(bytes) => {
+                let mut fp = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(self.path)?;
+                fp.write_all(&bytes)?;
+            }
+            // A hard link does not replace a file that is already there, the same as `create_new`.
+            Contents::Staged(staged) => std::fs::hard_link(&staged.0, self.path)?,
+        }
         Ok(())
     }
+}
+
+/// Why a book or an audiobook is refused when no subtitles in the entry pass the check.
+const NEEDS_SUBTITLES: &str = "a book or an audiobook needs subtitles in this entry that pass the check. \
+    Upload the .srt first, or in the same upload.";
+
+/// True when a subtitle file in the entry folder passes `subcheck`.
+fn has_good_subtitles(entry_path: &std::path::Path, script: Script) -> bool {
+    let Ok(dir) = entry_path.read_dir() else {
+        return false;
+    };
+    dir.flatten().any(|file| {
+        let path = file.path();
+        let Some(format) = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .and_then(subcheck::Format::from_extension)
+        else {
+            return false;
+        };
+        file.metadata()
+            .is_ok_and(|m| m.is_file() && m.len() <= subcheck::MAX_BYTES as u64)
+            && std::fs::read(&path).is_ok_and(|bytes| subcheck::check(&bytes, format, script).is_ok())
+    })
+}
+
+/// Reads a field into memory, and refuses it when it is larger than `limit`.
+async fn read_capped(mut field: Field<'_>, limit: u64) -> anyhow::Result<Bytes> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field.chunk().await? {
+        if (bytes.len() + chunk.len()) as u64 > limit {
+            bail!("the file is larger than {} MB", limit / 1024 / 1024);
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes.into())
+}
+
+/// Writes a field to a new file in `staging`, and refuses it when it is larger than `limit`.
+async fn stage(staging: &std::path::Path, mut field: Field<'_>, limit: u64) -> anyhow::Result<Staged> {
+    use tokio::io::AsyncWriteExt;
+    tokio::fs::create_dir_all(staging).await?;
+    let mut random = [0u8; 12];
+    getrandom::getrandom(&mut random)?;
+    let name: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let staged = Staged(staging.join(format!("{name}.part")));
+    let mut file = tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged.0)
+        .await?;
+    let mut written = 0u64;
+    while let Some(chunk) = field.chunk().await? {
+        written += chunk.len() as u64;
+        if written > limit {
+            bail!("the file is larger than {} MB", limit / 1024 / 1024);
+        }
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+    Ok(staged)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1309,6 +1400,7 @@ fn verify_zip(bytes: &[u8], script: Script) -> anyhow::Result<()> {
 
 async fn verify_file(
     entry_path: &std::path::Path,
+    staging: &std::path::Path,
     file_name: PathBuf,
     field: Field<'_>,
     script: Script,
@@ -1317,27 +1409,52 @@ async fn verify_file(
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
+    let path = entry_path.join(file_name);
+    if let Some(kind) = extension.as_deref().and_then(bookcheck::Kind::from_extension) {
+        if path.exists() {
+            bail!("a file with this name is already there")
+        }
+        let staged = stage(staging, field, kind.max_bytes()).await?;
+        let (checked, staged) =
+            tokio::task::spawn_blocking(move || (bookcheck::check(&staged.0, kind, script), staged)).await?;
+        checked?;
+        return Ok(ProcessedFile {
+            path,
+            contents: Contents::Staged(staged),
+            passed_subcheck: false,
+            book: true,
+        });
+    }
     match extension.as_deref() {
         Some(ext @ ("srt" | "vtt" | "ass" | "ssa" | "zip" | "sub" | "sup" | "idx" | "7z")) => {
-            let path = entry_path.join(file_name);
             if path.exists() {
                 bail!("a file with this name is already there")
             }
-            let bytes = field.bytes().await?;
+            let bytes = read_capped(field, crate::MAX_UPLOAD_SIZE).await?;
             // The name says what the file claims to be. The contents say what it is.
+            let mut passed_subcheck = false;
             if let Some(format) = subcheck::Format::from_extension(ext) {
                 subcheck::check(&bytes, format, script)?;
+                passed_subcheck = true;
             } else if ext == "zip" {
                 verify_zip(&bytes, script)?;
             }
-            Ok(ProcessedFile { path, bytes })
+            Ok(ProcessedFile {
+                path,
+                contents: Contents::Bytes(bytes),
+                passed_subcheck,
+                book: false,
+            })
         }
-        _ => bail!("not a subtitle file (srt, vtt, ass, ssa, sub, sup, idx, zip, 7z)"),
+        _ => bail!(
+            "not a subtitle, book or audiobook file (srt, vtt, ass, ssa, sub, sup, idx, zip, 7z, epub, m4b, opus)"
+        ),
     }
 }
 
 async fn process_files(
     entry_path: &std::path::Path,
+    staging: &std::path::Path,
     mut multipart: Multipart,
     script: Script,
 ) -> anyhow::Result<ProcessedFiles> {
@@ -1352,13 +1469,27 @@ async fn process_files(
         };
 
         let shown = name.display().to_string();
-        match verify_file(entry_path, name, field, script).await {
+        match verify_file(entry_path, staging, name, field, script).await {
             Ok(file) => files.push(file),
             Err(e) => {
                 tracing::debug!(error=%e, "Skipped file due to validation issue");
                 problems.push(format!("{shown}: {e}"));
                 skipped += 1
             }
+        }
+    }
+
+    // A book or an audiobook goes only where subtitles pass the check: in this upload, or in the entry.
+    if files.iter().any(|f| f.book) && !files.iter().any(|f| f.passed_subcheck) {
+        let folder = entry_path.to_path_buf();
+        if !tokio::task::spawn_blocking(move || has_good_subtitles(&folder, script)).await? {
+            let (books, rest): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| f.book);
+            for book in books {
+                let shown = book.path.file_name().unwrap_or_default().to_string_lossy();
+                problems.push(format!("{shown}: {NEEDS_SUBTITLES}"));
+                skipped += 1;
+            }
+            files = rest;
         }
     }
     Ok(ProcessedFiles {
@@ -1417,7 +1548,11 @@ pub async fn raw_upload_file(
         .or(state.config().subtitle_language.as_deref());
     let script = Script::from_code(language.unwrap_or(""));
     let entry = entry.path;
-    let Ok(processed) = process_files(&entry, multipart, script).await else {
+    // A book or an audiobook is written here first. The folder is on the same file system as
+    // the entries, so a hard link can move the file into place. The sync skips it, because its
+    // name starts with a dot.
+    let staging = state.config().subtitle_path.join(".incoming");
+    let Ok(processed) = process_files(&entry, &staging, multipart, script).await else {
         return Err(ApiError::new("Internal error when processing files").with_code(ApiErrorCode::ServerError));
     };
 
@@ -1529,6 +1664,20 @@ async fn bulk_download(
     let Some(entry) = state.get_directory_entry(entry_id).await else {
         return Err(ApiError::not_found("Directory entry not found."));
     };
+
+    // The zip is made in memory. An audiobook is too large for that, so it is downloaded alone.
+    const MAX_BULK_BYTES: u64 = 64 * 1024 * 1024;
+    let mut total = 0;
+    for file in &payload.files {
+        if let Ok(metadata) = tokio::fs::metadata(entry.path.join(file)).await {
+            total += metadata.len();
+        }
+    }
+    if total > MAX_BULK_BYTES {
+        return Err(ApiError::new(
+            "The files are larger than 64 MB together. Download the large files one by one.",
+        ));
+    }
 
     let filename = sanitise_file_name::sanitise(&format!("{}.zip", &entry.name));
     let buffer = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
@@ -1919,10 +2068,6 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/entry/search", get(search_directory_entries))
         .route(
-            "/entry/{id}/upload",
-            post(upload_file).layer(RateLimit::default().build()),
-        )
-        .route(
             "/entry/{id}/bulk",
             post(bulk_download).layer(RateLimit::default().build()),
         )
@@ -1941,4 +2086,13 @@ pub fn routes() -> Router<AppState> {
                 .delete(remove_bookmark)
                 .layer(RateLimit::default().build()),
         )
+}
+
+/// The upload route. It is apart from the others because an audiobook needs a larger body
+/// limit and a longer timeout (see `routes::uploads`).
+pub fn upload_routes() -> Router<AppState> {
+    Router::new().route(
+        "/entry/{id}/upload",
+        post(upload_file).layer(RateLimit::default().build()),
+    )
 }

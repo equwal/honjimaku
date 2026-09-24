@@ -458,6 +458,9 @@ struct UploadedFiles {
 /// Multiple files can be uploaded at a time. The field name should be
 /// `file` and the `filename` should point to the subtitle filename.
 /// You can have multiple `file` fields.
+///
+/// A book (`.epub`) or an audiobook (`.m4b`, `.opus`) is accepted only when
+/// subtitles in the entry, or in the same request, pass the check.
 #[utoipa::path(
     post,
     path = "/api/entries/{id}/upload",

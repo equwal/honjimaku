@@ -13,7 +13,10 @@ use rustls_acme::{caches::DirCache, is_tls_alpn_challenge};
 use tokio_rustls::LazyConfigAcceptor;
 use tower::{limit::GlobalConcurrencyLimitLayer, Layer, Service, ServiceExt as _};
 use tower_http::{
-    compression::CompressionLayer,
+    compression::{
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
+        CompressionLayer,
+    },
     normalize_path::NormalizePathLayer,
     services::{ServeDir, ServeFile},
     timeout::TimeoutLayer,
@@ -132,16 +135,26 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
         .nest_service("/favicon.ico", ServeFile::new("static/icons/favicon.ico"))
         .nest_service("/robots.txt", ServeFile::new("static/robots.txt"))
         .nest_service("/static", ServeDir::new("static"))
+        // These limits are for the routes above. The upload routes, merged after them, have their own.
+        .layer(DefaultBodyLimit::max(jimaku::MAX_BODY_SIZE))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(jimaku::MAX_BODY_SIZE))
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .merge(jimaku::routes::uploads())
         .layer(middleware::from_fn_with_state(state.clone(), jimaku::copy_api_token))
         .layer(jimaku::logging::HttpTrace::new(state.requests.clone()))
         .layer(middleware::from_fn(jimaku::flash::process_flash_messages))
         .layer(middleware::from_fn(jimaku::parse_cookies))
         .layer(Extension(secret_key))
         .layer(Extension(jimaku::cached::BodyCache::new(Duration::from_secs(120))))
-        .layer(DefaultBodyLimit::max(jimaku::MAX_BODY_SIZE))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(jimaku::MAX_BODY_SIZE))
-        .layer(CompressionLayer::new())
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        // Audio and EPUB are compressed already. To compress them again costs CPU for no gain,
+        // and it removes Content-Length and range requests from a download of an audiobook.
+        .layer(
+            CompressionLayer::new().compress_when(
+                DefaultPredicate::new()
+                    .and(NotForContentType::const_new("audio/"))
+                    .and(NotForContentType::const_new("application/epub+zip")),
+            ),
+        )
         .layer(GlobalConcurrencyLimitLayer::new(512))
         .with_state(state);
 

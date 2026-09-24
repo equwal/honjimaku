@@ -97,14 +97,24 @@ pub fn routes() -> Router<AppState> {
         .route("/entries/{id}/files", get(entries::get_entry_files))
         .route("/entries/search", get(entries::search_entries))
         .route("/entries", post(entries::create_entry))
+        .route_layer(RateLimit::default().quota(25, 60.0).build())
+        .route_layer(cors())
+}
+
+/// The upload route of the API. It is apart from the others because an audiobook needs a
+/// larger body limit and a longer timeout (see `routes::uploads`).
+pub fn upload_routes() -> Router<AppState> {
+    Router::new()
         .route("/entries/{id}/upload", post(entries::upload_files))
         .route_layer(RateLimit::default().quota(25, 60.0).build())
-        .route_layer(
-            CorsLayer::new()
-                .allow_methods([Method::GET, Method::POST])
-                .allow_credentials(true)
-                .allow_origin(AllowOrigin::mirror_request())
-                // Content-Type: a page on another site (subread.space) sends JSON to make an entry.
-                .allow_headers([AUTHORIZATION, USER_AGENT, CONTENT_TYPE]),
-        )
+        .route_layer(cors())
+}
+
+fn cors() -> CorsLayer {
+    CorsLayer::new()
+        .allow_methods([Method::GET, Method::POST])
+        .allow_credentials(true)
+        .allow_origin(AllowOrigin::mirror_request())
+        // Content-Type: a page on another site (subread.space) sends JSON to make an entry.
+        .allow_headers([AUTHORIZATION, USER_AGENT, CONTENT_TYPE])
 }

@@ -281,3 +281,18 @@ pub fn all() -> Router<AppState> {
         .merge(report::routes())
         .nest("/api", api::routes())
 }
+
+/// The upload routes. They take a body of up to `MAX_BOOK_UPLOAD_SIZE` and have one hour to
+/// read it, because an audiobook is large. All other routes keep the small limits of `main`.
+pub fn uploads() -> Router<AppState> {
+    Router::new()
+        .merge(entry::upload_routes())
+        .nest("/api", api::upload_routes())
+        .layer(axum::extract::DefaultBodyLimit::max(crate::utils::MAX_BOOK_UPLOAD_SIZE))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            crate::utils::MAX_BOOK_UPLOAD_SIZE,
+        ))
+        .layer(tower_http::timeout::TimeoutLayer::new(std::time::Duration::from_secs(
+            3600,
+        )))
+}

@@ -79,6 +79,70 @@ r = upload([('ok2.srt', book(400, 'どこで生れたか頓と見当がつかぬ
 check('of two files, the good one goes in and the bad one is named', any('Uploaded 1 file' in f and 'junk.srt' in f for f in flashes(r.text)), flashes(r.text))
 
 files = s.get(B + f'/api/entries/{entry}/files')
+
+# --- books (.epub) and audiobooks (.m4b, .opus): each passes its own check, and the entry
+# must have subtitles that pass the check.
+import pathlib, struct
+FIX = pathlib.Path(__file__).resolve().parent.parent / 'tests' / 'fixtures'
+NEKO = '吾輩は猫である。名前はまだ無い。'
+def epub(text):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w') as z:
+        z.writestr(zipfile.ZipInfo('mimetype'), 'application/epub+zip')
+        z.writestr('META-INF/container.xml', '<container/>')
+        z.writestr('OEBPS/p1.xhtml', '<html><head><title>x</title></head><body><p>%s</p></body></html>' % text)
+    return buf.getvalue()
+def padded_m4b(mb):
+    """A real 10-minute M4B, made larger with an MP4 'free' box that players skip."""
+    n = mb * 1024 * 1024
+    return (FIX / 'silence-10m.m4b').read_bytes() + struct.pack('>I', 8 + n) + b'free' + b'\0' * n
+M4B = (FIX / 'silence-10m.m4b').read_bytes()
+OPUS = (FIX / 'silence-10m.opus').read_bytes()
+def upload_to(eid, files):
+    return patient(lambda: s.post(B + f'/entry/{eid}/upload', files=[('file', f) for f in files], headers={'Referer': B + f'/entry/{eid}'}))
+def said(r, words):
+    return any(words in f for f in flashes(r.text))
+tag = random.randrange(10**6)
+
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'bare book %d' % tag, 'book_id': 'audiobook.jp bare %d' % tag, 'anime': 'true'}))
+m = re.search(r'/entry/(\d+)', r.url)
+bare = int(m.group(1)) if m else sys.exit(1)
+r = upload_to(bare, [('neko%d.epub' % tag, epub(NEKO * 50), 'application/epub+zip')])
+check('an epub in an entry with no subtitles is refused, with the reason', said(r, 'needs subtitles'), flashes(r.text))
+r = upload_to(bare, [('neko%d.m4b' % tag, M4B, 'audio/mp4')])
+check('an m4b in an entry with no subtitles is refused, with the reason', said(r, 'needs subtitles'), flashes(r.text))
+r = upload_to(bare, [('neko%d.epub' % tag, epub(NEKO * 50), 'application/epub+zip'),
+                     ('neko%d.m4b' % tag, M4B, 'audio/mp4'),
+                     ('neko%d.srt' % tag, book(400, NEKO), 'application/x-subrip')])
+page = s.get(B + f'/entry/{bare}').text
+check('subtitles, an epub and an m4b in one upload are all accepted', said(r, 'successful') and 'neko%d.epub' % tag in page and 'neko%d.m4b' % tag in page, flashes(r.text))
+
+r = upload_to(entry, [('neko%d.opus' % tag, OPUS, 'audio/ogg')])
+check('an opus audiobook goes into an entry that has good subtitles', said(r, 'successful'), flashes(r.text))
+r = upload_to(entry, [('english%d.epub' % tag, epub('It was a dark and stormy night. ' * 50), 'application/epub+zip')])
+check('an English epub is refused on the Japanese site', said(r, 'not Japanese'), flashes(r.text))
+r = upload_to(entry, [('short%d.opus' % tag, (FIX / 'silence-1s.opus').read_bytes(), 'audio/ogg')])
+check('a one-second opus is refused as not the whole audiobook', said(r, 'minutes long'), flashes(r.text))
+r = upload_to(entry, [('fake%d.m4b' % tag, book(400, NEKO), 'audio/mp4')])
+check('subtitles named .m4b are refused', said(r, 'not an M4B'), flashes(r.text))
+r = upload_to(entry, [('fake%d.epub' % tag, b'PK\x03\x04 not really', 'application/epub+zip')])
+check('a broken zip named .epub is refused', said(r, 'not an EPUB'), flashes(r.text))
+
+big = 'big%d.m4b' % tag
+r = upload_to(entry, [(big, padded_m4b(65), 'audio/mp4')])
+check('a 65 MB audiobook passes the 16 MB limit of the other routes', said(r, 'successful'), (r.status_code, flashes(r.text)))
+r = s.get(B + f'/entry/{entry}/download/{big}', stream=True)
+check('the large audiobook downloads whole', r.status_code == 200 and int(r.headers.get('content-length', 0)) == len(M4B) + 8 + 65 * 1024 * 1024, dict(r.headers))
+r.close()
+r = patient(lambda: s.post(B + f'/entry/{entry}/bulk', json={'files': [big]}))
+check('a bulk zip of more than 64 MB is refused, with the reason', r.status_code >= 400 and 'one by one' in r.text, (r.status_code, r.text[:200]))
+try:
+    # The server can answer 413 and close the connection before it reads the whole body.
+    status = s.post(B + f'/entry/{entry}/report', data=b'x' * (17 * 1024 * 1024), headers={'Content-Type': 'application/json'}).status_code
+except requests.exceptions.ConnectionError:
+    status = 'closed'
+check('other routes still refuse a body over 16 MB', status in (413, 'closed'), status)
+
 # --- the API, as subread.space uses it
 r = patient(lambda: s.post(B + '/account/api_key', json={'new': True}, headers={'Referer': B + '/account'}))
 key = None

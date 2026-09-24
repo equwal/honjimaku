@@ -18,6 +18,9 @@ use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 /// The maximum amount of bytes an upload can have, in bytes.
 pub const MAX_UPLOAD_SIZE: u64 = 1024 * 1024 * 16;
 pub const MAX_BODY_SIZE: usize = MAX_UPLOAD_SIZE as usize;
+/// The maximum size of the body of an upload request: one audiobook, and a little more for
+/// its subtitles and the multipart headers.
+pub const MAX_BOOK_UPLOAD_SIZE: usize = crate::bookcheck::MAX_AUDIO_BYTES as usize + 64 * 1024 * 1024;
 
 pub const FRAGMENT: &AsciiSet = &CONTROLS
     .add(b' ')

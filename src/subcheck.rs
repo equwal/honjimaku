@@ -10,7 +10,7 @@
 use std::fmt;
 
 /// A book or an episode is long. A file shorter than this is a sample, or something else.
-const MIN_DURATION_SECONDS: f64 = 10.0 * 60.0;
+pub const MIN_DURATION_SECONDS: f64 = 10.0 * 60.0;
 const MIN_CUES: usize = 30;
 /// A book of 40 hours is about 6 MB of subtitles.
 pub const MAX_BYTES: usize = 25 * 1024 * 1024;
@@ -193,7 +193,7 @@ pub fn check(bytes: &[u8], format: Format, script: Script) -> Result<Summary, Re
             ));
         }
     }
-    if let Some(problem) = wrong_script(&cues, script) {
+    if let Some(problem) = wrong_script(cues.iter().flat_map(|c| c.text.chars()), script, "subtitles") {
         problems.push(problem);
     }
 
@@ -209,12 +209,14 @@ pub fn check(bytes: &[u8], format: Format, script: Script) -> Result<Summary, Re
     })
 }
 
-fn wrong_script(cues: &[Cue], script: Script) -> Option<String> {
+/// Says why the text is not in the script of the entry, or `None` when it is.
+/// `what` names the text for the uploader: "subtitles", "book".
+pub fn wrong_script(text: impl Iterator<Item = char>, script: Script, what: &str) -> Option<String> {
     if script == Script::Any {
         return None;
     }
     let (mut letters, mut kana, mut han) = (0usize, 0usize, 0usize);
-    for ch in cues.iter().flat_map(|c| c.text.chars()).filter(|ch| ch.is_alphabetic()) {
+    for ch in text.filter(|ch| ch.is_alphabetic()) {
         letters += 1;
         match ch as u32 {
             0x3040..=0x30FF | 0x31F0..=0x31FF | 0xFF66..=0xFF9F => kana += 1,
@@ -223,16 +225,16 @@ fn wrong_script(cues: &[Cue], script: Script) -> Option<String> {
         }
     }
     if letters == 0 {
-        return Some("The subtitles hold no words.".to_owned());
+        return Some(format!("There are no words in the {what}."));
     }
     let share = |n: usize| n as f64 / letters as f64;
     match script {
         // Japanese text always has kana. Chinese text has none.
         Script::Japanese if share(kana) < 0.20 || share(kana + han) < 0.60 => {
-            Some("The text is not Japanese. This site is for Japanese subtitles.".to_owned())
+            Some(format!("The text is not Japanese. This site is for Japanese {what}."))
         }
         Script::Chinese if share(han) < 0.60 || share(kana) > 0.05 => {
-            Some("The text is not Chinese. This site is for Chinese subtitles.".to_owned())
+            Some(format!("The text is not Chinese. This site is for Chinese {what}."))
         }
         _ => None,
     }
