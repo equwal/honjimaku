@@ -21,6 +21,7 @@ pub mod japanese;
 pub mod jpsubbers;
 pub mod key;
 pub mod kitsunekko;
+pub mod language;
 pub mod logging;
 pub mod models;
 pub mod notification;

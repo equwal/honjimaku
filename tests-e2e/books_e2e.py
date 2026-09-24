@@ -131,7 +131,34 @@ check('the same ASIN again is refused, and the entry is named', any('here alread
 r = patient(lambda: s.post(B + '/entry/create', data={'name': 'nothing', 'book_id': 'B0000000XX', 'anime': 'true'}))
 check('an ASIN that Audible does not know is refused', any('does not know' in f for f in flashes(r.text)), flashes(r.text))
 r = patient(lambda: s.post(B + '/entry/create', data={'name': 'Pride and Prejudice', 'book_id': 'B01BNU3A7K', 'anime': 'true'}))
-check('an English audiobook is refused on the Japanese site', any('english' in f and 'japanese' in f for f in flashes(r.text)), flashes(r.text))
+check('an English audiobook is refused on the Japanese tab', any('english' in f.lower() and 'japanese' in f.lower() for f in flashes(r.text)), flashes(r.text))
+
+# --- a tab for each language. Audible has one catalog for each country; the site asks each.
+def made_or_found(r):
+    m = re.search(r'/entry/(\d+)', r.url) or re.search(r'/entry/(\d+)', ' '.join(flashes(r.text)))
+    return int(m.group(1)) if m else None
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'x', 'book_id': 'B01BNU3A7K', 'language': 'en', 'anime': 'true'}))
+pride = made_or_found(r)
+check('an English audiobook (Audible Japan) is made on the English tab', bool(pride), (r.url, flashes(r.text)))
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'x', 'book_id': 'B002V1OF70', 'language': 'en', 'anime': 'true'}))
+dune = made_or_found(r)
+check('an audiobook that only Audible US has is made', bool(dune) and 'Dune' in s.get(B + f'/entry/{dune}').text, (r.url, flashes(r.text)))
+r = patient(lambda: s.post(B + '/entry/create', data={'name': 'x', 'book_id': 'B002V1OF70', 'language': 'zz', 'anime': 'true'}))
+check('a language code that is not ISO 639-1 is refused', any('ISO 639-1' in f for f in flashes(r.text)), flashes(r.text))
+english = s.get(B + '/?lang=en').text
+home = s.get(B + '/').text
+check('the English tab lists the English books, the front page does not',
+      f'/entry/{pride}"' in english and f'/entry/{dune}"' in english and f'/entry/{pride}"' not in home and f'/entry/{verified}"' in home)
+check('the front page has a Japanese and an English tab', '>Japanese</a>' in home and 'href="/?lang=en">English</a>' in home)
+check('the drop-down offers each ISO 639-1 language', home.count('<option value=') > 180 and '<option value="sw"' in english)
+german = s.get(B + '/?lang=DE').text
+check('a language with no books has a tab and a form of its own', 'Add a book in German' in german and 'name="language" value="de"' in german)
+r = s.get(B + '/?lang=zz', allow_redirects=False)
+check('an unknown language code goes to the front page', r.status_code in (302, 303) and r.headers.get('location') == '/')
+if pride:
+    entry = pride
+    r = upload([('pride%d.srt' % random.randrange(10**6), book(400, 'It is a truth universally acknowledged.'), 'application/x-subrip')])
+    check('English subtitles go into an English book', any('successful' in f.lower() for f in flashes(r.text)), flashes(r.text))
 
 # the database: the ASIN is a column of its own, the entry is verified, and the file lands in the folder
 if verified:
@@ -146,6 +173,7 @@ if verified:
         row = con.execute('SELECT name, book_id, flags, path FROM directory_entry WHERE id = ?', (verified,)).fetchone()
         check('DB: the row holds the ASIN in book_id and is not flagged unverified', row and row[1] == ASIN and (row[2] & 2) == 0, row)
         check('DB: the folder is named after the Audible title and the ASIN', row and row[3].endswith(f'{AUDIBLE_TITLE} [{ASIN}]') and os.path.isfile(os.path.join(row[3], SRT)), row and row[3])
+        check('DB: a book made on a tab holds the code of its language', not pride or con.execute('SELECT language FROM directory_entry WHERE id = ?', (pride,)).fetchone()[0] == 'en')
         check('DB: book_id is unique', con.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='directory_entry_book_id_idx'").fetchone()[0] == 1)
         check('DB: older folders got their ASIN from the path', con.execute("SELECT count(*) FROM directory_entry WHERE path LIKE '%[B0________]' AND book_id IS NULL AND substr(path,-11,10) IN (SELECT substr(path,-11,10) FROM directory_entry GROUP BY 1 HAVING count(*)=1)").fetchone()[0] == 0)
 

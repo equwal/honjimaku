@@ -23,7 +23,7 @@
   {%- if let Some(book_id) = entry.book_id %}
   {%- if let Some(asin) = crate::audible::asin(book_id) %}
   <div class="external-links">
-    <a href="{{ crate::audible::url(asin) }}" title="Audible page for this audiobook">Audible {{ asin }}</a>
+    <a href="{{ crate::audible::page(entry.language_code(crate::CONFIG.get().unwrap()), asin) }}" title="Audible page for this audiobook">Audible {{ asin }}</a>
   </div>
   {%- endif %}
   {%- endif %}

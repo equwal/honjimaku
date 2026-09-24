@@ -155,6 +155,10 @@ struct CreateDirectoryEntry {
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     #[serde(default)]
     bangumi_url: Option<String>,
+    /// On a site for books: the ISO 639-1 code of the language of the book.
+    #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
+    #[serde(default)]
+    language: Option<String>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
 }
@@ -162,6 +166,8 @@ struct CreateDirectoryEntry {
 #[derive(Debug, Default)]
 pub struct PendingDirectoryEntry {
     pub book_id: Option<String>,
+    /// On a site for books: the ISO 639-1 code of the language of the book. None is the language of the site.
+    pub language: Option<String>,
     pub bangumi_id: Option<u32>,
     pub anilist_id: Option<u32>,
     pub tmdb_id: Option<tmdb::Id>,
@@ -179,6 +185,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
             tmdb_id: value.tmdb_url.as_deref().and_then(tmdb::get_tmdb_id),
             name: value.name,
             book_id: value.book_id,
+            language: value.language,
             bangumi_id: value.bangumi_url.as_deref().and_then(crate::bangumi::subject_id),
             anime: value.anime,
             notes: None,
@@ -290,6 +297,13 @@ pub async fn raw_create_directory_entry(
         // A book: the user names it. Say so if the site has it already, so that the
         // subtitles of one book do not end up in two places.
         let mut title = crate::book::clean_title(pending.name.as_deref().unwrap_or("")).map_err(ApiError::new)?;
+        // The book goes in the tab of its language.
+        let language = match pending.language.as_deref() {
+            None => state.config().default_language(),
+            Some(raw) => crate::language::code(raw)
+                .ok_or_else(|| ApiError::new(format!("\"{raw}\" is not an ISO 639-1 language code.")))?,
+        }
+        .to_owned();
         // An Audible ASIN is verified: Audible says the book exists, what it is named, and
         // in which language it is read. The entry takes the name of the shop and is verified.
         // The user may paste the Audible URL; only the ASIN in it is kept.
@@ -313,18 +327,18 @@ pub async fn raw_create_directory_entry(
         }
         let audiobook = match &asin {
             Some(asin) => {
-                let audiobook = crate::audible::lookup(&state.client, asin)
+                let audiobook = crate::audible::lookup(&state.client, asin, &language)
                     .await
                     .map_err(|e| {
                         tracing::warn!(error = %e, asin, "Audible did not answer");
                         ApiError::new("Audible did not answer. Try again later.").with_code(ApiErrorCode::ServerError)
                     })?
                     .ok_or_else(|| ApiError::new(format!("Audible does not know an audiobook {asin}.")))?;
-                let wanted = state.config().subtitle_language.as_deref().and_then(language_name);
-                if let (Some(wanted), Some(spoken)) = (wanted, audiobook.language.as_deref()) {
-                    if wanted != spoken {
+                if let Some(spoken) = audiobook.language.as_deref() {
+                    if !crate::language::is_audible_language(&language, spoken) {
                         return Err(ApiError::new(format!(
-                            "That audiobook is {spoken}. This site holds {wanted} subtitles."
+                            "That audiobook is in {spoken}, not in {}. Choose its language, then add it again.",
+                            crate::language::name(&language)
                         )));
                     }
                 }
@@ -365,6 +379,9 @@ pub async fn raw_create_directory_entry(
             }
         }
         pending.name = Some(title);
+        pending.language = Some(language);
+    } else {
+        pending.language = None;
     }
 
     // One show, one entry: say where it is if the site has it already.
@@ -410,8 +427,8 @@ pub async fn raw_create_directory_entry(
     };
 
     let query = r#"
-        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id, bangumi_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id, bangumi_id, language)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id;
     "#;
     let path_string = path_string.to_owned();
@@ -436,6 +453,7 @@ pub async fn raw_create_directory_entry(
                         names.native,
                         pending.book_id,
                         pending.bangumi_id,
+                        pending.language,
                     ),
                     |row| row.get("id"),
                 )
@@ -502,16 +520,6 @@ pub async fn raw_create_directory_entry(
         state.cached_directories().invalidate().await;
     }
     response
-}
-
-/// The language of the site as Audible names the language of an audiobook.
-fn language_name(code: &str) -> Option<&'static str> {
-    match code {
-        "ja" => Some("japanese"),
-        "zh" => Some("chinese"),
-        "en" => Some("english"),
-        _ => None,
-    }
 }
 
 async fn create_directory_entry(
@@ -670,7 +678,8 @@ async fn edit_directory_entry(
         // A new ASIN must be one that Audible knows. The user may paste the Audible URL.
         payload.book_id = match crate::audible::asin(&id) {
             Some(asin) if entry.book_id.as_deref() != Some(&asin) => {
-                match crate::audible::lookup(&state.client, &asin).await {
+                let language = entry.language_code(state.config());
+                match crate::audible::lookup(&state.client, &asin, language).await {
                     Ok(Some(_)) => Some(asin),
                     Ok(None) => {
                         return flasher
@@ -915,6 +924,7 @@ async fn move_directory_entries(
                 account.clone(),
                 PendingDirectoryEntry {
                     book_id: payload.book_id.clone(),
+                    language: None,
                     bangumi_id: payload.bangumi_id,
                     anilist_id: payload.anilist_id,
                     tmdb_id: payload.tmdb_id,
@@ -1396,11 +1406,17 @@ pub async fn raw_upload_file(
         return Err(ApiError::new("Account is restricted from uploading").with_code(ApiErrorCode::NoPermissions));
     }
 
-    let Some(entry) = state.get_directory_entry_path(entry_id).await else {
+    let Some(entry) = state.get_directory_entry(entry_id).await else {
         return Err(ApiError::not_found("Entry not found"));
     };
 
-    let script = Script::from_code(state.config().subtitle_language.as_deref().unwrap_or(""));
+    // The text of an upload must be in the language of the entry, or else of the site.
+    let language = entry
+        .language
+        .as_deref()
+        .or(state.config().subtitle_language.as_deref());
+    let script = Script::from_code(language.unwrap_or(""));
+    let entry = entry.path;
     let Ok(processed) = process_files(&entry, multipart, script).await else {
         return Err(ApiError::new("Internal error when processing files").with_code(ApiErrorCode::ServerError));
     };
@@ -1818,6 +1834,7 @@ async fn create_imported_entry(
     flags.set_anime(query.anime);
     let pending = PendingDirectoryEntry {
         book_id: None,
+        language: None,
         bangumi_id: payload.inner.bangumi_id,
         anilist_id: payload.inner.anilist_id,
         tmdb_id: payload.inner.tmdb_id,

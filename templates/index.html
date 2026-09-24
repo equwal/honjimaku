@@ -13,7 +13,17 @@
 
 {% block index_nav %}
 {%- if crate::CONFIG.get().unwrap().book_site %}
-<a class="nav-item active" href="/">Books</a>
+{%- for tab in tabs %}
+<a class="nav-item {% if tab.active %}active{% endif %}" href="{{ tab.href }}">{{ tab.name }}</a>
+{%- endfor %}
+<form class="nav-item language-picker" method="get" action="/">
+  <select name="lang" aria-label="Books in another language" onchange="this.form.submit()">
+    {%- for (code, name) in crate::language::all() %}
+    <option value="{{ code }}" {% if *code == language %}selected{% endif %}>{{ name }} ({{ code }})</option>
+    {%- endfor %}
+  </select>
+  <noscript><button class="button">Go</button></noscript>
+</form>
 {%- else if crate::CONFIG.get().unwrap().drama_site %}
 <a class="nav-item active" href="/">Dramas</a>
 {%- else %}
@@ -68,8 +78,9 @@
 <dialog id="upload-modal">
   <form method="post" action="/entry/create" autocomplete="off">
     {%- if crate::CONFIG.get().unwrap().book_site -%}
-    <h1>Add a book</h1>
+    <h1>Add a book in {{ crate::language::name(language) }}</h1>
     <div class="form-container">
+      <input type="hidden" name="language" value="{{ language }}">
       <label for="directory-name">Title of the book, as the audiobook shop writes it</label>
       <input class="form-field" name="name" id="directory-name" required maxlength="200"
              placeholder="吾輩は猫である" autocomplete="off" type="text">

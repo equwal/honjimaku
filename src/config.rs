@@ -89,6 +89,11 @@ impl Config {
         self.book_site || self.drama_site
     }
 
+    /// The ISO 639-1 code of an entry that has no language of its own.
+    pub fn default_language(&self) -> &str {
+        self.subtitle_language.as_deref().unwrap_or("ja")
+    }
+
     /// The language of the subtitles, as the pages name it.
     pub fn language_label(&self) -> &'static str {
         match self.subtitle_language.as_deref() {

@@ -43,6 +43,21 @@ where
     url: String,
     anime: bool,
     editor: bool,
+    /// On a site for books: the ISO 639-1 code of the language that the page lists.
+    language: &'a str,
+    /// On a site for books: a tab for each language that has books.
+    tabs: Vec<LanguageTab<'a>>,
+}
+
+struct LanguageTab<'a> {
+    href: String,
+    name: &'a str,
+    active: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct ListingQuery {
+    lang: Option<String>,
 }
 
 async fn index(
@@ -50,22 +65,70 @@ async fn index(
     account: Option<Account>,
     flashes: Flashes,
     encoding: AcceptEncoding,
+    Query(query): Query<ListingQuery>,
     Extension(cacher): Extension<BodyCache>,
-) -> impl IntoResponse {
+) -> axum::response::Response {
+    let config = state.config();
+    // A site for books has a tab for each language. The language of the site is at "/".
+    let language = match query.lang.as_deref().filter(|_| config.book_site) {
+        None => config.default_language(),
+        Some(raw) => match crate::language::code(raw) {
+            Some(code) => code,
+            None => return Redirect::to("/").into_response(),
+        },
+    };
     let entries = state.directory_entries().await;
-    let bypass_cache = account.is_some();
+    let mut bypass_cache = account.is_some();
+    let mut tabs = Vec::new();
+    if config.book_site {
+        let mut codes: Vec<&str> = entries.iter().map(|e| e.language_code(config)).collect();
+        codes.push(config.default_language());
+        codes.push(language);
+        codes.sort_unstable();
+        codes.dedup();
+        // The language of the site is the first tab. The others follow in the order of their names.
+        codes.sort_by_key(|&code| (code != config.default_language(), crate::language::name(code)));
+        tabs = codes
+            .into_iter()
+            .map(|code| LanguageTab {
+                href: if code == config.default_language() {
+                    String::from("/")
+                } else {
+                    format!("/?lang={code}")
+                },
+                name: crate::language::name(code),
+                active: code == language,
+            })
+            .collect();
+        // The cache holds one page, the page of the language of the site.
+        bypass_cache |= language != config.default_language();
+    }
+    let book_site = config.book_site;
     let editor = account.flags().is_editor();
     // A site for dramas lists every entry here, and its form asks for a TMDB page.
-    let drama_site = state.config().drama_site;
+    let drama_site = config.drama_site;
+    let url = if language == config.default_language() {
+        config.canonical_url()
+    } else {
+        config.url_to(format!("/?lang={language}"))
+    };
     let template = ListingTemplate {
         account,
-        entries: entries.iter().filter(|e| drama_site || e.flags.is_anime()),
+        entries: entries
+            .iter()
+            .filter(|e| drama_site || e.flags.is_anime())
+            .filter(|e| !book_site || e.language_code(config) == language),
         flashes,
-        url: state.config().canonical_url(),
+        url,
         anime: !drama_site,
         editor,
+        language,
+        tabs,
     };
-    cacher.cache_template("index", template, encoding, bypass_cache).await
+    cacher
+        .cache_template("index", template, encoding, bypass_cache)
+        .await
+        .into_response()
 }
 
 async fn dramas(
@@ -94,6 +157,8 @@ async fn dramas(
         url: state.config().url_to("/dramas"),
         anime: false,
         editor,
+        language: state.config().default_language(),
+        tabs: Vec::new(),
     };
     cacher
         .cache_template("dramas", template, encoding, bypass_cache)

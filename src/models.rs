@@ -246,6 +246,9 @@ pub struct DirectoryEntry {
     #[schema(example = 258207)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bangumi_id: Option<u32>,
+    /// The ISO 639-1 code of the language of the entry. None is the language of the site.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// Extra notes that the entry might have.
     ///
     /// Supports a limited set of markdown. Can only be set by editors.
@@ -274,6 +277,7 @@ impl Table for DirectoryEntry {
         "tmdb_id",
         "book_id",
         "bangumi_id",
+        "language",
         "notes",
         "english_name",
         "japanese_name",
@@ -295,6 +299,7 @@ impl Table for DirectoryEntry {
             tmdb_id: row.get("tmdb_id")?,
             book_id: row.get("book_id")?,
             bangumi_id: row.get("bangumi_id")?,
+            language: row.get("language")?,
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
@@ -320,6 +325,8 @@ pub struct DirectoryEntryBackup {
     pub book_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bangumi_id: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -370,10 +377,16 @@ impl DirectoryEntry {
             tmdb_id: Default::default(),
             book_id: Default::default(),
             bangumi_id: Default::default(),
+            language: Default::default(),
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
         }
+    }
+
+    /// The ISO 639-1 code of the language of the entry. An entry with none is in the language of the site.
+    pub fn language_code<'a>(&'a self, config: &'a crate::Config) -> &'a str {
+        self.language.as_deref().unwrap_or(config.default_language())
     }
 
     /// Returns data safe for embedding into the frontend
@@ -402,6 +415,7 @@ impl DirectoryEntry {
             tmdb_id: self.tmdb_id,
             book_id: self.book_id,
             bangumi_id: self.bangumi_id,
+            language: self.language,
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
@@ -453,6 +467,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             tmdb_id: value.tmdb_id,
             book_id: value.book_id,
             bangumi_id: value.bangumi_id,
+            language: value.language,
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,

@@ -46,7 +46,7 @@ impl Format {
     }
 }
 
-/// The language the site is for. The text of an upload must be mostly in its script.
+/// The language of the entry. The text of an upload must be mostly in its script.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Script {
     Japanese,

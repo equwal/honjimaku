@@ -306,6 +306,10 @@ pub struct CreatePayload {
     /// a book with that ASIN or title already, its entry is returned and nothing is made.
     #[serde(default)]
     book_id: Option<String>,
+    /// On a site for books: the ISO 639-1 code of the language of the book (`ja`, `en`).
+    /// Without it, the book is in the language of the site.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -384,6 +388,7 @@ pub async fn create_entry(
                     let pending = PendingDirectoryEntry {
                         name: Some(title),
                         book_id: payload.book_id,
+                        language: payload.language,
                         anime: true,
                         ..Default::default()
                     };

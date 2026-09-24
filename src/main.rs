@@ -269,13 +269,14 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 6] = [
+const MIGRATIONS: [&str; 7] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
     include_str!("../sql/3.sql"),
     include_str!("../sql/4.sql"),
     include_str!("../sql/5.sql"),
+    include_str!("../sql/6.sql"),
 ];
 
 fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
