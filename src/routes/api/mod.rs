@@ -2,25 +2,25 @@ mod auth;
 mod entries;
 pub mod utils;
 
-use crate::{filters, models::Account, ratelimit::RateLimit, utils::HtmlPage, AppState};
+use crate::{AppState, filters, models::Account, ratelimit::RateLimit, utils::HtmlPage};
 use askama::Template;
 use axum::{
+    Json, Router,
     extract::State,
     http::{
-        header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
         Method,
+        header::{AUTHORIZATION, CONTENT_TYPE, USER_AGENT},
     },
     routing::{get, post},
-    Json, Router,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use utoipa::{
-    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
     Modify, OpenApi,
+    openapi::security::{ApiKey, ApiKeyValue, SecurityScheme},
 };
 
 use crate::error::ApiError;
-pub use auth::{copy_api_token, ApiToken};
+pub use auth::{ApiToken, copy_api_token};
 pub use entries::SearchQuery;
 
 #[derive(OpenApi)]

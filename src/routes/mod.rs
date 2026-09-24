@@ -9,14 +9,14 @@ use crate::{
 };
 use askama::Template;
 use axum::{
+    Extension, Router,
     extract::{Path, Query, RawQuery, State},
     response::{IntoResponse, Redirect},
     routing::get,
-    Extension, Router,
 };
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 
-use crate::{models::DirectoryEntry, AppState};
+use crate::{AppState, models::DirectoryEntry};
 
 mod admin;
 mod api;
@@ -28,7 +28,7 @@ mod opensearch;
 mod relations;
 mod report;
 
-pub use api::{copy_api_token, ApiToken, SearchQuery};
+pub use api::{ApiToken, SearchQuery, copy_api_token};
 pub(crate) use report::RichReport;
 
 #[derive(Template)]
@@ -292,7 +292,8 @@ pub fn uploads() -> Router<AppState> {
         .layer(tower_http::limit::RequestBodyLimitLayer::new(
             crate::utils::MAX_BOOK_UPLOAD_SIZE,
         ))
-        .layer(tower_http::timeout::TimeoutLayer::new(std::time::Duration::from_secs(
-            3600,
-        )))
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            std::time::Duration::from_secs(3600),
+        ))
 }

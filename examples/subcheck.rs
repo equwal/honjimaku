@@ -1,7 +1,7 @@
 //! Runs the upload check over files already on disk, to see what it would refuse:
 //!
 //!     cargo run --example subcheck -- ja /path/to/subtitles
-use jimaku::subcheck::{check, Format, Script};
+use jimaku::subcheck::{Format, Script, check};
 use std::path::Path;
 
 fn walk(dir: &Path, script: Script, counts: &mut (usize, usize)) {

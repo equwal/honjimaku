@@ -402,21 +402,25 @@ mod tests {
     #[test]
     fn what_is_not_subtitles_is_refused_with_the_reason() {
         assert!(reasons(check(b"", Format::Srt, Script::Any)).contains("empty"));
-        assert!(reasons(check(
-            b"<!doctype html><html><body>404</body></html>",
-            Format::Srt,
-            Script::Any
-        ))
-        .contains("No subtitle lines"));
+        assert!(
+            reasons(check(
+                b"<!doctype html><html><body>404</body></html>",
+                Format::Srt,
+                Script::Any
+            ))
+            .contains("No subtitle lines")
+        );
         assert!(reasons(check(&[0xFF, 0xFE, b'1', 0], Format::Srt, Script::Any)).contains("UTF-16"));
         // Shift_JIS bytes of 吾輩
         assert!(reasons(check(&[0x8C, 0xE1, 0x94, 0x79, b'\n'], Format::Srt, Script::Any)).contains("not UTF-8"));
-        assert!(reasons(check(
-            b"1\n00:00:01,000 --> 00:00:02,000\nab\0cd\n",
-            Format::Srt,
-            Script::Any
-        ))
-        .contains("not text"));
+        assert!(
+            reasons(check(
+                b"1\n00:00:01,000 --> 00:00:02,000\nab\0cd\n",
+                Format::Srt,
+                Script::Any
+            ))
+            .contains("not text")
+        );
     }
 
     #[test]
@@ -512,7 +516,9 @@ mod tests {
         let summary = check(vtt.as_bytes(), Format::Vtt, Script::Japanese).unwrap();
         assert_eq!(summary.cues, 300);
 
-        let mut ass = String::from("[Script Info]\nTitle: x\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+        let mut ass = String::from(
+            "[Script Info]\nTitle: x\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+        );
         for i in 0..300 {
             let t = i * 4;
             ass.push_str(&format!(

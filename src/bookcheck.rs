@@ -7,7 +7,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
 
@@ -172,13 +172,13 @@ mod tests {
 
     fn epub(mimetype: &str, pages: &[&str]) -> Vec<u8> {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
-        let stored = zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("mimetype", stored).unwrap();
         zip.write_all(mimetype.as_bytes()).unwrap();
         zip.start_file("META-INF/container.xml", stored).unwrap();
         zip.write_all(b"<container/>").unwrap();
         for (i, page) in pages.iter().enumerate() {
-            zip.start_file(format!("OEBPS/p{i}.xhtml"), zip::write::FileOptions::default())
+            zip.start_file(format!("OEBPS/p{i}.xhtml"), zip::write::SimpleFileOptions::default())
                 .unwrap();
             zip.write_all(page.as_bytes()).unwrap();
         }

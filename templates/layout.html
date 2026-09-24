@@ -91,6 +91,9 @@
         <dialog id="settings-modal">
           <form>
             <h1>Settings</h1>
+            {% if account.is_some() %}
+            <p>Looking for account settings? Go <a tabindex="-1" href="/account">here</a>.</p>
+            {% endif %}
             <div class="form-container">
               <label for="preferred-name">Preferred Name Display</label>
               <select class="form-field" id="preferred-name">

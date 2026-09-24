@@ -13,7 +13,7 @@ use axum::{
 use bytes::Bytes;
 use percent_encoding::{AsciiSet, CONTROLS};
 use regex::Regex;
-use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
 /// The maximum amount of bytes an upload can have, in bytes.
 pub const MAX_UPLOAD_SIZE: u64 = 1024 * 1024 * 16;
@@ -108,7 +108,7 @@ pub const fn is_false(s: &bool) -> bool {
 }
 
 pub mod base64_bytes {
-    use base64::{prelude::BASE64_STANDARD, Engine};
+    use base64::{Engine, prelude::BASE64_STANDARD};
     use serde::{Deserialize, Deserializer, Serializer};
 
     use crate::borrowed::MaybeBorrowedString;
@@ -128,8 +128,9 @@ pub mod base64_bytes {
 ///
 /// This still requires using `#[serde(default)]` or `#[serde(skip_serialization_if = "Patch::is_missing")]`
 /// but this allows for easier differentiation than the double `Option` approach.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd, Default)]
 pub enum Patch<T> {
+    #[default]
     Missing,
     Null,
     Value(T),
@@ -164,12 +165,6 @@ impl<T> Patch<T> {
             Patch::Null => Some(None),
             Patch::Value(value) => Some(Some(value)),
         }
-    }
-}
-
-impl<T> Default for Patch<T> {
-    fn default() -> Self {
-        Self::Missing
     }
 }
 

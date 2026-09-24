@@ -1,17 +1,17 @@
 use crate::anilist::{self, MediaTitle};
 use crate::bookcheck;
-use crate::database::{is_unique_constraint_violation, Table};
-use crate::download::{validate_path, DownloadResponse};
+use crate::database::{Table, is_unique_constraint_violation};
+use crate::download::{DownloadResponse, validate_path};
 use crate::error::{ApiError, ApiErrorCode, InternalError};
 use crate::flash::{FlashMessage, Flasher, Flashes};
 use crate::headers::Referrer;
 use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Report, ReportPayload};
 use crate::ratelimit::RateLimit;
 use crate::subcheck::{self, Script};
-use crate::utils::{is_over_length, HtmlPage, FRAGMENT};
+use crate::utils::{FRAGMENT, HtmlPage, is_over_length};
+use crate::{AppState, tmdb};
 use crate::{audit, filters};
-use crate::{tmdb, AppState};
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use askama::Template;
 use axum::body::{Body, Bytes};
 use axum::extract::multipart::Field;
@@ -21,9 +21,9 @@ use axum::http::{HeaderName, HeaderValue};
 use axum::response::Redirect;
 use axum::routing::{delete, get, post, put};
 use axum::{
+    Router,
     extract::{Form, Path, Request, State},
     response::{IntoResponse, Response},
-    Router,
 };
 use percent_encoding::percent_encode;
 use rusqlite::OptionalExtension;
@@ -88,6 +88,8 @@ pub(crate) fn get_file_entries(entry_id: i64, path: &std::path::Path) -> std::io
             last_modified,
         });
     }
+
+    entries.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(entries)
 }
 
@@ -251,33 +253,57 @@ impl PendingDirectoryEntry {
     }
 
     fn path(&self, name: &str, anime: bool, state: &AppState) -> PathBuf {
-        // Series names aren't unique but directory names are
-        // So try to give it some noise depending on the anilist ID or tmdb ID
-        // This ordeal could also be entirely avoided by just using numeric folder names
-        // But having human readable folder names is fine
-
-        // A prefix is used for the flat directory structure since it's easier to
-        // reason about in the code.
-        let prefix = if !anime { "[drama] " } else { "" };
-        let directory_name = if let Some(id) = self.anilist_id {
-            sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
-        } else if let Some(id) = self.tmdb_id {
-            sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
-        } else if let Some(id) = &self.book_id {
-            sanitise_file_name::sanitise(&format!("{name} [{id}]"))
-        } else if let Some(id) = self.bangumi_id {
-            sanitise_file_name::sanitise(&format!("{name} [bgm-{id}]"))
-        } else {
-            // Avoid the extra allocation if possible
-            if anime {
-                sanitise_file_name::sanitise(name)
-            } else {
-                sanitise_file_name::sanitise(&format!("[drama] {name}"))
-            }
+        let ids = PathIds {
+            anilist_id: self.anilist_id,
+            tmdb_id: self.tmdb_id,
+            book_id: self.book_id.as_deref(),
+            bangumi_id: self.bangumi_id,
         };
-
-        state.config().subtitle_path.join(directory_name)
+        directory_entry_path(ids, name, anime, state)
     }
+}
+
+/// The IDs that go into the name of the folder of an entry. The first ID that is set is used.
+pub struct PathIds<'a> {
+    pub anilist_id: Option<u32>,
+    pub tmdb_id: Option<tmdb::Id>,
+    pub book_id: Option<&'a str>,
+    pub bangumi_id: Option<u32>,
+}
+
+pub fn directory_entry_path(ids: PathIds<'_>, name: &str, anime: bool, state: &AppState) -> PathBuf {
+    let PathIds {
+        anilist_id,
+        tmdb_id,
+        book_id,
+        bangumi_id,
+    } = ids;
+    // Series names aren't unique but directory names are
+    // So try to give it some noise depending on the anilist ID or tmdb ID
+    // This ordeal could also be entirely avoided by just using numeric folder names
+    // But having human readable folder names is fine
+
+    // A prefix is used for the flat directory structure since it's easier to
+    // reason about in the code.
+    let prefix = if !anime { "[drama] " } else { "" };
+    let directory_name = if let Some(id) = anilist_id {
+        sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
+    } else if let Some(id) = tmdb_id {
+        sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
+    } else if let Some(id) = book_id {
+        sanitise_file_name::sanitise(&format!("{name} [{id}]"))
+    } else if let Some(id) = bangumi_id {
+        sanitise_file_name::sanitise(&format!("{name} [bgm-{id}]"))
+    } else {
+        // Avoid the extra allocation if possible
+        if anime {
+            sanitise_file_name::sanitise(name)
+        } else {
+            sanitise_file_name::sanitise(&format!("[drama] {name}"))
+        }
+    };
+
+    state.config().subtitle_path.join(directory_name)
 }
 
 pub async fn raw_create_directory_entry(
@@ -469,7 +495,7 @@ pub async fn raw_create_directory_entry(
                     (entry_id, path)
                 }
                 Err(e) if is_unique_constraint_violation(&e) => {
-                    return Err(ApiError::new("Entry already exists.").with_code(ApiErrorCode::EntryAlreadyExists))
+                    return Err(ApiError::new("Entry already exists.").with_code(ApiErrorCode::EntryAlreadyExists));
                 }
                 Err(e) => return Err(e.into()),
             };
@@ -685,7 +711,7 @@ async fn edit_directory_entry(
                     Ok(None) => {
                         return flasher
                             .add(format!("Audible does not know an audiobook {asin}."))
-                            .bail(&url)
+                            .bail(&url);
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, asin, "Audible did not answer");
@@ -714,9 +740,34 @@ async fn edit_directory_entry(
 
     // maybe refactor this?
     let mut columns = Vec::with_capacity(11);
-    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::with_capacity(11);
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::with_capacity(12);
     let mut audit_data = audit::EditEntry::default();
     let flags = payload.apply_flags(entry.flags);
+    let mut changed_path: Option<PathBuf> = None;
+
+    if !flags.is_external() && (entry.anilist_id != payload.anilist_id || entry.tmdb_id != payload.tmdb_id) {
+        // Change the internal path if the path bound data is changed...
+        columns.push("path");
+        // A book or a Bangumi entry keeps its ID in the folder name, the same as when it was made.
+        let ids = PathIds {
+            anilist_id: payload.anilist_id,
+            tmdb_id: payload.tmdb_id,
+            book_id: payload.book_id.as_deref().or(entry.book_id.as_deref()),
+            bangumi_id: payload.bangumi_id.or(entry.bangumi_id),
+        };
+        let path = directory_entry_path(ids, payload.name.as_str(), flags.is_anime(), &state);
+        if path.exists() {
+            return flasher.add("Path already exists").bail(&url);
+        }
+
+        let path_string = path.to_str().map(|p| p.to_owned());
+        let Some(path_string) = path_string else {
+            return flasher.add("Resulting path was somehow not UTF-8").bail(&url);
+        };
+
+        changed_path = Some(path);
+        params.push(Box::new(path_string));
+    }
 
     if entry.name != payload.name {
         columns.push("name");
@@ -783,6 +834,12 @@ async fn edit_directory_entry(
             .await
         {
             Ok(_) => {
+                if let Some(path) = changed_path {
+                    // Potential issue when this fails and the database points to the new path
+                    // For now, just ignore the error. In the future, consider rewriting this
+                    // to use a transaction instead should it become an issue.
+                    let _ = tokio::fs::rename(entry.path, path).await;
+                }
                 state.cached_directories().invalidate().await;
                 state
                     .audit(audit::AuditLogEntry::full(audit_data, entry_id, account.id))
@@ -1681,7 +1738,7 @@ async fn bulk_download(
 
     let filename = sanitise_file_name::sanitise(&format!("{}.zip", &entry.name));
     let buffer = tokio::task::spawn_blocking(move || -> std::io::Result<_> {
-        let options = zip::write::FileOptions::default();
+        let options = zip::write::SimpleFileOptions::default();
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
 
         for file in payload.files {

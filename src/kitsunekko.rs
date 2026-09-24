@@ -8,9 +8,9 @@ Since it's so simple to parse I'm going to parse it using the regex crate.
 Examples:
 
 For the main directory listing:
-<tr><td colspan="2"><a href="/dir1ist.php?dir=subtitles%2Fjapanese%2FOokami+Kakushi%2F" class=""><strong>Ookami Kakushi</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:40:52 PM" > 1&nbsp;decade </td></tr>
-<tr><td colspan="2"><a href="/dir1ist.php?dir=subtitles%2Fjapanese%2FOokami-san+to+Shichinin+no+Nakama-tachi%2F" class=""><strong>Ookami-san to Shichinin no Nakama-tachi</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:41:18 PM" > 1&nbsp;decade </td></tr>
-<tr><td colspan="2"><a href="/dir1ist.php?dir=subtitles%2Fjapanese%2Fother%2F" class=""><strong>other</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:45:42 PM" > 1&nbsp;decade </td></tr>
+<tr><td colspan="2"><a href="/dirlist.php?dir=subtitles%2Fjapanese%2FOokami+Kakushi%2F" class=""><strong>Ookami Kakushi</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:40:52 PM" > 1&nbsp;decade </td></tr>
+<tr><td colspan="2"><a href="/dirlist.php?dir=subtitles%2Fjapanese%2FOokami-san+to+Shichinin+no+Nakama-tachi%2F" class=""><strong>Ookami-san to Shichinin no Nakama-tachi</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:41:18 PM" > 1&nbsp;decade </td></tr>
+<tr><td colspan="2"><a href="/dirlist.php?dir=subtitles%2Fjapanese%2Fother%2F" class=""><strong>other</strong> </a></td> <td class="tdright" title="Jul 15 2012 09:45:42 PM" > 1&nbsp;decade </td></tr>
 
 For an item's file listing:
 <tr><td><a href="subtitles/japanese/Undead Unluck/Undead.Unluck.S01E01.WEBRip.Netflix.ja[cc].srt" class=""><strong>Undead.Unluck.S01E01.WEBRip.Netflix.ja[cc].srt</strong> </a></td> <td class="tdleft"  title="37996"  > 37&nbsp;KB </td> <td class="tdright" title="Nov 08 2023 06:09:20 AM" > 3&nbsp;months </td></tr>
@@ -19,23 +19,23 @@ For an item's file listing:
 
 */
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use regex::Regex;
 use std::{collections::HashMap, io::Write, path::PathBuf, sync::OnceLock};
 use time::{
+    OffsetDateTime, PrimitiveDateTime,
     format_description::FormatItem,
     macros::{format_description, offset},
-    OffsetDateTime, PrimitiveDateTime,
 };
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use crate::{
+    AppState,
     anilist::{Media, MediaTitle},
     audit::{AuditLogEntry, ScrapeDirectory, ScrapeResult, ScrapeSource},
-    fixture::{commit_fixtures, Fixture},
+    fixture::{Fixture, commit_fixtures},
     models::EntryFlags,
-    AppState,
 };
 
 fn regex() -> &'static Regex {
@@ -90,14 +90,14 @@ impl File {
         }
 
         let resp = client.get(&self.url).send().await?;
-        if let Some(bytes) = resp.content_length() {
-            if bytes >= crate::MAX_UPLOAD_SIZE {
-                bail!(
-                    "file at {} is over the maximum file size with {} bytes",
-                    self.url,
-                    bytes
-                );
-            }
+        if let Some(bytes) = resp.content_length()
+            && bytes >= crate::MAX_UPLOAD_SIZE
+        {
+            bail!(
+                "file at {} is over the maximum file size with {} bytes",
+                self.url,
+                bytes
+            );
         }
 
         let bytes = resp.bytes().await?;
@@ -268,7 +268,7 @@ pub async fn scrape(state: &AppState, date: OffsetDateTime) -> anyhow::Result<Ve
 
     let mut directories = get_entries(
         &state.client,
-        "https://kitsunekko.net/dir1ist.php?dir=subtitles%2Fjapanese%2F",
+        "https://kitsunekko.net/dirlist.php?dir=subtitles%2Fjapanese%2F",
     )
     .await?
     .into_iter()
@@ -367,12 +367,11 @@ pub async fn scrape(state: &AppState, date: OffsetDateTime) -> anyhow::Result<Ve
             });
         }
 
-        if !directory.exists() {
-            if let Err(e) = std::fs::create_dir_all(&directory) {
-                if e.kind() != std::io::ErrorKind::AlreadyExists {
-                    return Err(e).with_context(|| format!("Could not create directory {}", directory.display()));
-                }
-            }
+        if !directory.exists()
+            && let Err(e) = std::fs::create_dir_all(&directory)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(e).with_context(|| format!("Could not create directory {}", directory.display()));
         }
 
         let name = entry.name.clone();
@@ -401,7 +400,7 @@ async fn scrape_from_whitelist(
 
     let mut directories = get_entries(
         &state.client,
-        "https://kitsunekko.net/dir1ist.php?dir=subtitles%2Fjapanese%2F",
+        "https://kitsunekko.net/dirlist.php?dir=subtitles%2Fjapanese%2F",
     )
     .await?
     .into_iter()
@@ -565,7 +564,7 @@ mod tests {
     #[tokio::test]
     async fn test_kitsunekko_parse() -> anyhow::Result<()> {
         let client = reqwest::Client::new();
-        let url = "https://kitsunekko.net/dir1ist.php?dir=subtitles%2Fjapanese%2F";
+        let url = "https://kitsunekko.net/dirlist.php?dir=subtitles%2Fjapanese%2F";
         let captures = get_entries(&client, url).await?;
         println!("got {} entries", captures.len());
         println!("{:?}", &captures[0..5]);

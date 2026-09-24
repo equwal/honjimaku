@@ -1,4 +1,5 @@
 use crate::{
+    AppState,
     auth::{hash_password, validate_password},
     database::is_unique_constraint_violation,
     error::{ApiError, ApiErrorCode},
@@ -7,19 +8,18 @@ use crate::{
     headers::Referrer,
     key::SecretKey,
     logging::BadRequestReason,
-    models::{is_valid_username, Account, DirectoryEntry, Session},
+    models::{Account, DirectoryEntry, Session, is_valid_username},
     ratelimit::RateLimit,
     token::{Token, TokenRejection},
     utils::{HtmlPage, Patch},
-    AppState,
 };
 use askama::Template;
 use axum::{
+    Form, Json, Router,
     extract::{Path, State},
-    http::{header::SET_COOKIE, HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode, header::SET_COOKIE},
     response::{IntoResponse, Redirect, Response},
     routing::{delete, get, post},
-    Form, Json, Router,
 };
 use cookie::Cookie;
 use serde::{Deserialize, Serialize};
@@ -292,7 +292,7 @@ async fn login_form(
 }
 
 #[derive(Template)]
-#[template(path = "account.html")]
+#[template(path = "account.html", print = "code")]
 struct AccountInfoTemplate {
     account: Option<Account>,
     user: Account,

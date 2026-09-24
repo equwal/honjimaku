@@ -3,7 +3,7 @@
 use std::{borrow::Cow, str::FromStr};
 
 use regex::Regex;
-use serde::{ser::SerializeMap, Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, ser::SerializeMap};
 use std::sync::OnceLock;
 
 use crate::models::Account;

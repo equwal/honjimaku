@@ -6,7 +6,7 @@ use std::{
 
 use axum::{
     extract::{FromRequestParts, Request},
-    http::{header::SET_COOKIE, request::Parts, HeaderValue, StatusCode},
+    http::{HeaderValue, StatusCode, header::SET_COOKIE, request::Parts},
     middleware::Next,
     response::{IntoResponse, Redirect, Response},
 };
@@ -131,17 +131,13 @@ impl<'a> std::fmt::Display for FlashMessageHtml<'a> {
 /// The level for the flash message.
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 #[repr(u8)]
+#[derive(Default)]
 pub enum FlashLevel {
+    #[default]
     Info,
     Success,
     Warning,
     Error,
-}
-
-impl Default for FlashLevel {
-    fn default() -> Self {
-        Self::Info
-    }
 }
 
 impl std::fmt::Display for FlashLevel {

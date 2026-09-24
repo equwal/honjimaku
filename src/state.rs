@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{RwLock, RwLockReadGuard};
 
 use crate::{
+    Config, Database,
     audit::AuditLogEntry,
     auth::hash_password,
     cached::TimedCachedValue,
@@ -12,7 +13,6 @@ use crate::{
     notification::NotificationService,
     relations::Relations,
     token::MAX_TOKEN_AGE,
-    Config, Database,
 };
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]

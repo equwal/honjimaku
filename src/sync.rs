@@ -11,8 +11,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::models::EntryFlags;
 use crate::AppState;
+use crate::models::EntryFlags;
 
 /// The names of the folders in `root` that no entry has yet.
 fn folders_without_entry(root: &Path, known: &HashSet<String>) -> Vec<(String, String)> {

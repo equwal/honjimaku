@@ -2,18 +2,18 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::{
     audit,
-    download::{validate_path, DownloadResponse},
+    download::{DownloadResponse, validate_path},
     filters,
     logging::RequestLogEntry,
-    utils::{logs_directory, HtmlPage},
+    utils::{HtmlPage, logs_directory},
 };
 use askama::Template;
 use axum::{
+    Extension, Json, Router,
     extract::{Path, Query, Request, State},
     http::StatusCode,
     response::Redirect,
     routing::{get, post},
-    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -21,11 +21,11 @@ use tower::ServiceExt as _;
 use tower_http::services::ServeFile;
 
 use crate::{
+    AppState,
     cached::BodyCache,
     error::ApiError,
     models::Account,
     trash::{Trash, TrashListing},
-    AppState,
 };
 
 #[derive(Deserialize)]

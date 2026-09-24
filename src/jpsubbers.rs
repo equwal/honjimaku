@@ -26,19 +26,20 @@ There are a few caveats:
 
 use std::{collections::HashMap, io::Write, path::PathBuf, sync::OnceLock};
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use regex::Regex;
 use time::OffsetDateTime;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use crate::{
+    AppState,
     anilist::MediaTitle,
     audit::{AuditLogEntry, ScrapeDirectory, ScrapeResult, ScrapeSource},
-    fixture::{commit_fixtures, Fixture},
+    fixture::{Fixture, commit_fixtures},
     kitsunekko::USER_AGENT,
     models::EntryFlags,
-    tmdb, AppState,
+    tmdb,
 };
 
 const BASE_URL: &str = "https://jpsubbers.com";
@@ -94,14 +95,14 @@ impl File {
         }
 
         let resp = client.get(&self.url).send().await?;
-        if let Some(bytes) = resp.content_length() {
-            if bytes >= crate::MAX_UPLOAD_SIZE {
-                bail!(
-                    "file at {} is over the maximum file size with {} bytes",
-                    self.url,
-                    bytes
-                );
-            }
+        if let Some(bytes) = resp.content_length()
+            && bytes >= crate::MAX_UPLOAD_SIZE
+        {
+            bail!(
+                "file at {} is over the maximum file size with {} bytes",
+                self.url,
+                bytes
+            );
         }
 
         let bytes = resp.bytes().await?;
@@ -300,12 +301,11 @@ pub async fn scrape(state: &AppState) -> anyhow::Result<Vec<Fixture>> {
             }
         };
 
-        if !directory.exists() {
-            if let Err(e) = std::fs::create_dir_all(&directory) {
-                if e.kind() != std::io::ErrorKind::AlreadyExists {
-                    return Err(e).with_context(|| format!("Could not create directory {}", directory.display()));
-                }
-            }
+        if !directory.exists()
+            && let Err(e) = std::fs::create_dir_all(&directory)
+            && e.kind() != std::io::ErrorKind::AlreadyExists
+        {
+            return Err(e).with_context(|| format!("Could not create directory {}", directory.display()));
         }
 
         let name = entry.name.clone();

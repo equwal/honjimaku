@@ -1,20 +1,19 @@
 use askama::Template;
 use axum::{
+    Router,
     extract::{Path, Query, State},
     response::Redirect,
     routing::{get, post},
-    Router,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    audit,
+    AppState, audit,
     database::Table,
     error::ApiError,
     models::{Account, Report, ReportStatus},
     routes::api::utils::ApiJson as Json,
     utils::HtmlPage,
-    AppState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -170,10 +169,10 @@ async fn update_report(
 
     match result {
         Some(report) => {
-            if report.status != ReportStatus::Pending {
-                if let Some(account_id) = report.account_id {
-                    state.notifications.notify_answered_report(account_id, report.id);
-                }
+            if report.status != ReportStatus::Pending
+                && let Some(account_id) = report.account_id
+            {
+                state.notifications.notify_answered_report(account_id, report.id);
             }
             let mut audit = audit::AuditLogEntry::new(audit::ResolveReport {
                 report_id: report.id,

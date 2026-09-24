@@ -2,8 +2,9 @@ use std::{convert::Infallible, io::Write, net::SocketAddr, path::PathBuf, str::F
 
 use anyhow::Context;
 use axum::{
+    Extension, ServiceExt,
     extract::{DefaultBodyLimit, Request},
-    middleware, Extension, ServiceExt,
+    middleware,
 };
 use futures_util::StreamExt;
 use hyper::body::Incoming;
@@ -11,11 +12,11 @@ use hyper_util::rt::{TokioExecutor, TokioIo};
 use rustls_acme::AcmeConfig;
 use rustls_acme::{caches::DirCache, is_tls_alpn_challenge};
 use tokio_rustls::LazyConfigAcceptor;
-use tower::{limit::GlobalConcurrencyLimitLayer, Layer, Service, ServiceExt as _};
+use tower::{Layer, Service, ServiceExt as _, limit::GlobalConcurrencyLimitLayer};
 use tower_http::{
     compression::{
-        predicate::{DefaultPredicate, NotForContentType, Predicate},
         CompressionLayer,
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
     },
     normalize_path::NormalizePathLayer,
     services::{ServeDir, ServeFile},
@@ -24,11 +25,11 @@ use tower_http::{
 use tracing::{error, info};
 use tracing_appender::{non_blocking::WorkerGuard, rolling::Rotation};
 use tracing_subscriber::{
+    Layer as _,
     filter::{LevelFilter, Targets},
     fmt::format::FmtSpan,
     layer::SubscriberExt,
     util::SubscriberInitExt,
-    Layer as _,
 };
 
 fn unwrap_infallible<T>(result: Result<T, Infallible>) -> T {
@@ -138,7 +139,10 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
         // These limits are for the routes above. The upload routes, merged after them, have their own.
         .layer(DefaultBodyLimit::max(jimaku::MAX_BODY_SIZE))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(jimaku::MAX_BODY_SIZE))
-        .layer(TimeoutLayer::new(Duration::from_secs(30)))
+        .layer(TimeoutLayer::with_status_code(
+            hyper::StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(30),
+        ))
         .merge(jimaku::routes::uploads())
         .layer(middleware::from_fn_with_state(state.clone(), jimaku::copy_api_token))
         .layer(jimaku::logging::HttpTrace::new(state.requests.clone()))
@@ -312,7 +316,14 @@ fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
 
 fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: PathBuf) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
-    let path = path.join("jimaku_backup.zip");
+    let date = time::UtcDateTime::now().date();
+    let filename = format!(
+        "jimaku_backup_{}-{:02}-{:02}.zip",
+        date.year(),
+        date.month() as u8,
+        date.day()
+    );
+    let path = path.join(filename);
     let file = std::fs::File::create(&path).context("could not create .zip file")?;
     let writer = std::io::BufWriter::new(file);
     let mut zip = rawzip::ZipArchiveWriter::new(writer);
@@ -362,7 +373,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
 
             let (mut entry, config) = zip
                 .new_file(name.as_str())
-                .compression_method(rawzip::CompressionMethod::Zstd)
+                .compression_method(rawzip::CompressionMethod::ZSTD)
                 .unix_permissions(0o644)
                 .start()?;
 
@@ -383,7 +394,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
     let json = serde_json::to_string(&entries).context("could not convert entries to JSON")?;
     let (mut entry, config) = zip
         .new_file("entries.json")
-        .compression_method(rawzip::CompressionMethod::Zstd)
+        .compression_method(rawzip::CompressionMethod::ZSTD)
         .unix_permissions(0o644)
         .start()?;
 
@@ -503,14 +514,13 @@ async fn run(command: jimaku::Command) -> anyhow::Result<()> {
             backup_to_zip(entries, path)
         }
         jimaku::Command::Upload { path } => {
-            match &state.config().buzzheavier {
-                Some(buzzheavier) => {
-                    let file = tokio::fs::File::open(path).await?;
-                    let url = buzzheavier.upload(&state.client, file).await?;
+            match &state.config().gofile {
+                Some(gofile) => {
+                    let url = gofile.upload(&state.client, path).await?;
                     println!("Uploaded backup file to {url}");
                     state.database().update_storage("backup_url", url).await?;
                 }
-                None => eprintln!("No account ID set up for buzzheavier to upload"),
+                None => eprintln!("No authentication token set up for Gofile to upload"),
             };
             Ok(())
         }

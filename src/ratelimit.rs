@@ -9,7 +9,7 @@ use futures_util::future::Either;
 use quick_cache::sync::Cache;
 
 use std::{
-    future::{ready, Future, Ready},
+    future::{Future, Ready, ready},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Arc,

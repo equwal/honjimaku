@@ -1,7 +1,7 @@
 use std::{str::FromStr, sync::OnceLock};
 
 use regex::Regex;
-use rusqlite::{types::FromSql, ToSql};
+use rusqlite::{ToSql, types::FromSql};
 use serde::{Deserialize, Serialize};
 
 use crate::{anilist::MediaTitle, borrowed::MaybeBorrowedString, japanese::is_japanese_char};

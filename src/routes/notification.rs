@@ -1,14 +1,14 @@
 use askama::Template;
 use axum::{
+    Json, Router,
     extract::{Query, State},
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    error::ApiError, models::Account, notification::NotificationData, routes::RichReport, utils::HtmlPage, AppState,
+    AppState, error::ApiError, models::Account, notification::NotificationData, routes::RichReport, utils::HtmlPage,
 };
 
 #[derive(Serialize)]

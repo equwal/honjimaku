@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use anyhow::bail;
-use reqwest::header::{HeaderValue, ACCEPT, CONTENT_TYPE, RETRY_AFTER};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderValue, RETRY_AFTER};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use tracing::warn;
 
 use crate::borrowed::MaybeBorrowedString;
@@ -213,14 +213,13 @@ where
     if response.status().is_server_error() {
         bail!("anilist returned a server error: {}", response.status())
     }
-    if let Some(header) = response.headers().get(RETRY_AFTER) {
-        if let Ok(seconds) = header.to_str() {
-            if let Ok(seconds) = seconds.parse::<u64>() {
-                warn!("rate limited by anilist API for {} seconds", seconds);
-                tokio::time::sleep(Duration::from_secs(seconds)).await;
-                response = body.send(client).await?;
-            }
-        }
+    if let Some(header) = response.headers().get(RETRY_AFTER)
+        && let Ok(seconds) = header.to_str()
+        && let Ok(seconds) = seconds.parse::<u64>()
+    {
+        warn!("rate limited by anilist API for {} seconds", seconds);
+        tokio::time::sleep(Duration::from_secs(seconds)).await;
+        response = body.send(client).await?;
     }
 
     response.json::<GraphQlResult<T>>().await?.into_result()
