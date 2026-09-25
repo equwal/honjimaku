@@ -570,11 +570,13 @@ struct EditDirectoryEntry {
     japanese_name: Option<String>,
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     english_name: Option<String>,
-    #[serde(deserialize_with = "anilist_id_or_url")]
+    // The edit form of a site for books or for shows has no AniList or TMDB field. Without
+    // a default, serde refuses the whole form as one with a missing field.
+    #[serde(default, deserialize_with = "anilist_id_or_url")]
     anilist_id: Option<u32>,
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     notes: Option<String>,
-    #[serde(rename = "tmdb_url", deserialize_with = "tmdb_url")]
+    #[serde(default, rename = "tmdb_url", deserialize_with = "tmdb_url")]
     tmdb_id: Option<tmdb::Id>,
     /// On a site for books: the identifier of the audiobook. An ASIN is verified against Audible.
     #[serde(default, deserialize_with = "crate::utils::empty_string_is_none")]
@@ -590,12 +592,16 @@ struct EditDirectoryEntry {
     movie: bool,
     #[serde(default)]
     anime: bool,
+    /// A person has reviewed the subtitles against the book, the audiobook or the video.
+    #[serde(default)]
+    reviewed: bool,
 }
 
 impl EditDirectoryEntry {
     fn apply_flags(&self, mut flags: EntryFlags) -> EntryFlags {
         flags.set_unverified(self.unverified);
         flags.set_adult(self.adult);
+        flags.set_reviewed(self.reviewed);
         flags.set_movie(self.movie);
         flags.set_anime(self.anime);
         flags
@@ -1304,7 +1310,7 @@ impl Drop for Staged {
 enum Contents {
     /// A subtitle file or a zip: small, so it is kept in memory.
     Bytes(Bytes),
-    /// A book or an audiobook: too large for memory, so it is on the disk.
+    /// A book, an audiobook or a video: too large for memory, so it is on the disk.
     Staged(Staged),
 }
 
@@ -1312,10 +1318,6 @@ enum Contents {
 struct ProcessedFile {
     path: PathBuf,
     contents: Contents,
-    /// Subtitles that passed `subcheck`. A book or an audiobook needs such a file.
-    passed_subcheck: bool,
-    /// A book or an audiobook.
-    book: bool,
 }
 
 impl ProcessedFile {
@@ -1333,30 +1335,6 @@ impl ProcessedFile {
         }
         Ok(())
     }
-}
-
-/// Why a book or an audiobook is refused when no subtitles in the entry pass the check.
-const NEEDS_SUBTITLES: &str = "a book or an audiobook needs subtitles in this entry that pass the check. \
-    Upload the .srt first, or in the same upload.";
-
-/// True when a subtitle file in the entry folder passes `subcheck`.
-fn has_good_subtitles(entry_path: &std::path::Path, script: Script) -> bool {
-    let Ok(dir) = entry_path.read_dir() else {
-        return false;
-    };
-    dir.flatten().any(|file| {
-        let path = file.path();
-        let Some(format) = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .and_then(subcheck::Format::from_extension)
-        else {
-            return false;
-        };
-        file.metadata()
-            .is_ok_and(|m| m.is_file() && m.len() <= subcheck::MAX_BYTES as u64)
-            && std::fs::read(&path).is_ok_and(|bytes| subcheck::check(&bytes, format, script).is_ok())
-    })
 }
 
 /// Reads a field into memory, and refuses it when it is larger than `limit`.
@@ -1478,8 +1456,6 @@ async fn verify_file(
         return Ok(ProcessedFile {
             path,
             contents: Contents::Staged(staged),
-            passed_subcheck: false,
-            book: true,
         });
     }
     match extension.as_deref() {
@@ -1489,22 +1465,18 @@ async fn verify_file(
             }
             let bytes = read_capped(field, crate::MAX_UPLOAD_SIZE).await?;
             // The name says what the file claims to be. The contents say what it is.
-            let mut passed_subcheck = false;
             if let Some(format) = subcheck::Format::from_extension(ext) {
                 subcheck::check(&bytes, format, script)?;
-                passed_subcheck = true;
             } else if ext == "zip" {
                 verify_zip(&bytes, script)?;
             }
             Ok(ProcessedFile {
                 path,
                 contents: Contents::Bytes(bytes),
-                passed_subcheck,
-                book: false,
             })
         }
         _ => bail!(
-            "not a subtitle, book or audiobook file (srt, vtt, ass, ssa, sub, sup, idx, zip, 7z, epub, m4b, opus)"
+            "not a subtitle, book, audiobook or video file (srt, vtt, ass, ssa, sub, sup, idx, zip, 7z, epub, pdf, m4b, opus, mp4, mkv)"
         ),
     }
 }
@@ -1533,20 +1505,6 @@ async fn process_files(
                 problems.push(format!("{shown}: {e}"));
                 skipped += 1
             }
-        }
-    }
-
-    // A book or an audiobook goes only where subtitles pass the check: in this upload, or in the entry.
-    if files.iter().any(|f| f.book) && !files.iter().any(|f| f.passed_subcheck) {
-        let folder = entry_path.to_path_buf();
-        if !tokio::task::spawn_blocking(move || has_good_subtitles(&folder, script)).await? {
-            let (books, rest): (Vec<_>, Vec<_>) = files.into_iter().partition(|f| f.book);
-            for book in books {
-                let shown = book.path.file_name().unwrap_or_default().to_string_lossy();
-                problems.push(format!("{shown}: {NEEDS_SUBTITLES}"));
-                skipped += 1;
-            }
-            files = rest;
         }
     }
     Ok(ProcessedFiles {
@@ -1605,7 +1563,7 @@ pub async fn raw_upload_file(
         .or(state.config().subtitle_language.as_deref());
     let script = Script::from_code(language.unwrap_or(""));
     let entry = entry.path;
-    // A book or an audiobook is written here first. The folder is on the same file system as
+    // A book, an audiobook or a video is written here first. The folder is on the same file system as
     // the entries, so a hard link can move the file into place. The sync skips it, because its
     // name starts with a dot.
     let staging = state.config().subtitle_path.join(".incoming");
@@ -2145,7 +2103,7 @@ pub fn routes() -> Router<AppState> {
         )
 }
 
-/// The upload route. It is apart from the others because an audiobook needs a larger body
+/// The upload route. It is apart from the others because an audiobook or a video needs a larger body
 /// limit and a longer timeout (see `routes::uploads`).
 pub fn upload_routes() -> Router<AppState> {
     Router::new().route(

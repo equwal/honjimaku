@@ -460,8 +460,9 @@ struct UploadedFiles {
 /// `file` and the `filename` should point to the subtitle filename.
 /// You can have multiple `file` fields.
 ///
-/// A book (`.epub`) or an audiobook (`.m4b`, `.opus`) is accepted only when
-/// subtitles in the entry, or in the same request, pass the check.
+/// The book (`.epub`, `.pdf`), the audiobook (`.m4b`, `.opus`) or the video (`.mp4`,
+/// `.mkv`) can be uploaded too, alone or with the subtitles. A person reviews the
+/// subtitles against them, and the entry then carries the `reviewed` flag.
 #[utoipa::path(
     post,
     path = "/api/entries/{id}/upload",

@@ -150,13 +150,16 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
         .layer(middleware::from_fn(jimaku::parse_cookies))
         .layer(Extension(secret_key))
         .layer(Extension(jimaku::cached::BodyCache::new(Duration::from_secs(120))))
-        // Audio and EPUB are compressed already. To compress them again costs CPU for no gain,
-        // and it removes Content-Length and range requests from a download of an audiobook.
+        // Audio, video, EPUB and PDF are compressed already. To compress them again costs CPU for
+        // no gain, and it removes Content-Length and range requests from a download of an
+        // audiobook or a video.
         .layer(
             CompressionLayer::new().compress_when(
                 DefaultPredicate::new()
                     .and(NotForContentType::const_new("audio/"))
-                    .and(NotForContentType::const_new("application/epub+zip")),
+                    .and(NotForContentType::const_new("video/"))
+                    .and(NotForContentType::const_new("application/epub+zip"))
+                    .and(NotForContentType::const_new("application/pdf")),
             ),
         )
         .layer(GlobalConcurrencyLimitLayer::new(512))

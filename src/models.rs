@@ -50,6 +50,7 @@ impl EntryFlags {
     const EXTERNAL: u32 = 1 << 2;
     const MOVIE: u32 = 1 << 3;
     const ADULT: u32 = 1 << 4;
+    const REVIEWED: u32 = 1 << 5;
 
     pub const fn new() -> Self {
         Self(Self::ANIME)
@@ -108,6 +109,14 @@ impl EntryFlags {
     pub fn set_adult(&mut self, toggle: bool) {
         self.toggle_flag(Self::ADULT, toggle)
     }
+
+    pub fn is_reviewed(&self) -> bool {
+        self.has_flag(Self::REVIEWED)
+    }
+
+    pub fn set_reviewed(&mut self, toggle: bool) {
+        self.toggle_flag(Self::REVIEWED, toggle)
+    }
 }
 
 impl Default for EntryFlags {
@@ -139,6 +148,10 @@ pub struct ExpandedEntryFlags {
     #[schema(example = false)]
     #[serde(default)]
     adult: bool,
+    /// A person has reviewed the subtitles against the book, the audiobook or the video.
+    #[schema(example = false)]
+    #[serde(default)]
+    reviewed: bool,
 }
 
 impl From<EntryFlags> for ExpandedEntryFlags {
@@ -149,6 +162,7 @@ impl From<EntryFlags> for ExpandedEntryFlags {
             external: value.is_external(),
             movie: value.is_movie(),
             adult: value.is_adult(),
+            reviewed: value.is_reviewed(),
         }
     }
 }
@@ -161,6 +175,7 @@ impl From<ExpandedEntryFlags> for EntryFlags {
         flags.set_external(value.external);
         flags.set_movie(value.movie);
         flags.set_adult(value.adult);
+        flags.set_reviewed(value.reviewed);
         flags
     }
 }
@@ -174,6 +189,7 @@ impl std::fmt::Debug for EntryFlags {
             .field("external", &self.is_external())
             .field("movie", &self.is_movie())
             .field("adult", &self.is_adult())
+            .field("reviewed", &self.is_reviewed())
             .finish()
     }
 }
@@ -864,5 +880,24 @@ impl Report {
             reason,
             payload,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_reviewed_flag_goes_through_the_expanded_form_and_the_api() {
+        let mut flags = EntryFlags::new();
+        assert!(!flags.is_reviewed());
+        flags.set_reviewed(true);
+        let expanded = ExpandedEntryFlags::from(flags);
+        assert!(expanded.reviewed && expanded.anime && !expanded.unverified);
+        assert_eq!(EntryFlags::from(expanded), flags);
+        assert!(serde_json::to_string(&expanded).unwrap().contains("\"reviewed\":true"));
+        // An API client that does not know the flag leaves it out, and that means false.
+        let old: ExpandedEntryFlags = serde_json::from_str(r#"{"anime":true}"#).unwrap();
+        assert!(!EntryFlags::from(old).is_reviewed());
     }
 }

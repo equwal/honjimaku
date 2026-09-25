@@ -1,11 +1,15 @@
-//! The check that an uploaded book (`.epub`) or audiobook (`.m4b`, `.opus`) is what its name says.
+//! The check that an uploaded book, audiobook or video is what its name says.
 //!
-//! A book or an audiobook must pass the same tests as subtitles where they apply: the text of a
-//! book must be in the language of the entry, and an audiobook must be as long as a whole
-//! recording. The upload route also asks for subtitles that pass `subcheck` in the same entry.
+//! These files are not subtitles. An entry keeps them beside the subtitles so that a person can
+//! review the subtitles against them: the book (`.epub`, `.pdf`), the audiobook (`.m4b`,
+//! `.opus`) or the video (`.mp4`, `.mkv`). They pass the tests of subtitles where they apply:
+//! the text of an EPUB must be in the language of the entry, and an audiobook or a video must
+//! be as long as a whole recording. A PDF is only checked to be a PDF, because its text cannot
+//! be read without a large library.
 
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 use lofty::config::ParseOptions;
@@ -17,46 +21,64 @@ use crate::subcheck::{self, Script};
 pub const MAX_BOOK_BYTES: u64 = 200 * 1024 * 1024;
 /// 40 hours at 64 kbit/s is 1.1 GB.
 pub const MAX_AUDIO_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Two hours at 2 Mbit/s is 1.8 GB.
+pub const MAX_VIDEO_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// The largest file that `check` accepts.
+pub const MAX_FILE_BYTES: u64 = if MAX_AUDIO_BYTES > MAX_VIDEO_BYTES {
+    MAX_AUDIO_BYTES
+} else {
+    MAX_VIDEO_BYTES
+};
 /// The language test reads this much text at most. More text does not change the result.
 const MAX_TEXT_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_MEMBERS: usize = 20_000;
+/// `%%EOF` is in the last bytes of a PDF. Some tools write a few lines after it.
+const PDF_TAIL_BYTES: u64 = 2048;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     Epub,
+    Pdf,
     M4b,
     Opus,
+    Mp4,
+    Mkv,
 }
 
 impl Kind {
     pub fn from_extension(ext: &str) -> Option<Self> {
         match ext.to_ascii_lowercase().as_str() {
             "epub" => Some(Self::Epub),
+            "pdf" => Some(Self::Pdf),
             "m4b" => Some(Self::M4b),
             "opus" => Some(Self::Opus),
+            "mp4" => Some(Self::Mp4),
+            "mkv" => Some(Self::Mkv),
             _ => None,
         }
     }
 
     pub fn max_bytes(self) -> u64 {
         match self {
-            Self::Epub => MAX_BOOK_BYTES,
+            Self::Epub | Self::Pdf => MAX_BOOK_BYTES,
             Self::M4b | Self::Opus => MAX_AUDIO_BYTES,
+            Self::Mp4 | Self::Mkv => MAX_VIDEO_BYTES,
         }
     }
 }
 
-/// Checks the file at `path`. It reads the file from the disk, because an audiobook is too
-/// large to keep in memory.
+/// Checks the file at `path`. It reads the file from the disk, because an audiobook or a
+/// video is too large to keep in memory.
 pub fn check(path: &Path, kind: Kind, script: Script) -> anyhow::Result<()> {
     let file = std::fs::File::open(path)?;
     match kind {
         Kind::Epub => check_epub(file, script),
-        Kind::M4b | Kind::Opus => check_audio(file, kind),
+        Kind::Pdf => check_pdf(file),
+        Kind::M4b | Kind::Opus | Kind::Mp4 | Kind::Mkv => check_recording(file, kind),
     }
 }
 
-fn check_epub<R: Read + std::io::Seek>(reader: R, script: Script) -> anyhow::Result<()> {
+fn check_epub<R: Read + Seek>(reader: R, script: Script) -> anyhow::Result<()> {
     let Ok(mut archive) = zip::ZipArchive::new(reader) else {
         bail!("the file is not an EPUB (it is not a zip)");
     };
@@ -139,26 +161,86 @@ fn body_text(page: &str) -> String {
     out
 }
 
-fn check_audio(mut file: std::fs::File, kind: Kind) -> anyhow::Result<()> {
+/// A PDF starts with `%PDF-` and ends with `%%EOF`. What is between them is for the
+/// person who reviews the subtitles.
+fn check_pdf<R: Read + Seek>(mut file: R) -> anyhow::Result<()> {
+    let mut head = Vec::new();
+    (&mut file).take(8).read_to_end(&mut head)?;
+    if !head.starts_with(b"%PDF-") {
+        bail!("the file is not a PDF (it does not start with %PDF-)");
+    }
+    let length = file.seek(SeekFrom::End(0))?;
+    let tail_length = length.min(PDF_TAIL_BYTES);
+    file.seek(SeekFrom::End(-(tail_length as i64)))?;
+    let mut tail = Vec::new();
+    file.take(tail_length).read_to_end(&mut tail)?;
+    if !tail.windows(5).any(|bytes| bytes == b"%%EOF") {
+        bail!("the file is not a whole PDF (it does not end with %%EOF)");
+    }
+    Ok(())
+}
+
+/// The length of a recording and the number of its audio channels, as its container says them.
+fn recording(file: &mut std::fs::File, kind: Kind) -> anyhow::Result<(Duration, u64)> {
     let options = ParseOptions::new().read_tags(false).read_cover_art(false);
-    let (duration, channels) = match kind {
-        Kind::M4b => match lofty::mp4::Mp4File::read_from(&mut file, options) {
-            Ok(mp4) => (mp4.properties().duration(), mp4.properties().channels().unwrap_or(0)),
+    match kind {
+        Kind::M4b => match lofty::mp4::Mp4File::read_from(file, options) {
+            Ok(mp4) => Ok((mp4.properties().duration(), channels(mp4.properties().channels()))),
             Err(_) => bail!("the file is not an M4B audiobook (an MP4 file with audio)"),
         },
-        Kind::Opus => match lofty::ogg::OpusFile::read_from(&mut file, options) {
-            Ok(opus) => (opus.properties().duration(), opus.properties().channels()),
+        Kind::Opus => match lofty::ogg::OpusFile::read_from(file, options) {
+            Ok(opus) => Ok((opus.properties().duration(), u64::from(opus.properties().channels()))),
             Err(_) => bail!("the file is not Opus audio in an Ogg file"),
         },
-        Kind::Epub => unreachable!("an EPUB is not audio"),
-    };
+        // The properties of an MP4 are those of its first audio track.
+        Kind::Mp4 => match lofty::mp4::Mp4File::read_from(file, options) {
+            Ok(mp4) => Ok((mp4.properties().duration(), channels(mp4.properties().channels()))),
+            Err(_) => bail!("the file is not an MP4 video with audio"),
+        },
+        Kind::Mkv => {
+            // A seek table that points to the wrong place makes the reader panic. Such a file
+            // is refused, and the server goes on.
+            let opened = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| matroska::Matroska::open(file)));
+            let Ok(Ok(mkv)) = opened else {
+                bail!("the file is not a Matroska (MKV) video");
+            };
+            let channels = mkv
+                .audio_tracks()
+                .map(|track| match &track.settings {
+                    matroska::Settings::Audio(audio) => audio.channels,
+                    _ => 0,
+                })
+                .max()
+                .unwrap_or(0);
+            Ok((mkv.info.duration.unwrap_or_default(), channels))
+        }
+        Kind::Epub | Kind::Pdf => unreachable!("a book is not a recording"),
+    }
+}
+
+fn channels(count: Option<u8>) -> u64 {
+    u64::from(count.unwrap_or(0))
+}
+
+fn check_recording(mut file: std::fs::File, kind: Kind) -> anyhow::Result<()> {
+    let (duration, channels) = recording(&mut file, kind)?;
+    let video = matches!(kind, Kind::Mp4 | Kind::Mkv);
     if channels == 0 {
-        bail!("the file holds no audio");
+        bail!(if video {
+            "the video has no audio"
+        } else {
+            "the file holds no audio"
+        });
     }
     let seconds = duration.as_secs_f64();
     if seconds < subcheck::MIN_DURATION_SECONDS {
+        let (what, whole) = if video {
+            ("video", "recording")
+        } else {
+            ("audio", "audiobook")
+        };
         bail!(
-            "the audio is {:.0} minutes long. Is this the whole audiobook?",
+            "the {what} is {:.0} minutes long. Is this the whole {whole}?",
             seconds / 60.0
         );
     }
@@ -233,18 +315,46 @@ mod tests {
         );
     }
 
+    /// The smallest PDF: one empty page. The bytes between the header and `%%EOF` are not read.
+    fn pdf(header: &[u8], footer: &[u8]) -> Vec<u8> {
+        let mut bytes = header.to_vec();
+        bytes.extend_from_slice(b"\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+        bytes.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n");
+        bytes.extend_from_slice(b"trailer\n<< /Root 1 0 R >>\n");
+        bytes.extend_from_slice(footer);
+        bytes
+    }
+
     #[test]
-    fn what_is_not_audio_is_refused() {
+    fn a_pdf_passes_and_what_is_not_a_pdf_is_refused() {
+        check_pdf(Cursor::new(pdf(b"%PDF-1.4", b"%%EOF\n"))).unwrap();
+        // A PDF that a tool wrote a note after, and one with a Windows line end.
+        check_pdf(Cursor::new(pdf(b"%PDF-2.0", b"%%EOF\r\n% made by a tool\r\n"))).unwrap();
+        assert!(why(check_pdf(Cursor::new(pdf(b"%!PS-Adobe-3.0", b"%%EOF")))).contains("not a PDF"));
+        assert!(why(check_pdf(Cursor::new("吾輩は猫である。".repeat(100).into_bytes()))).contains("not a PDF"));
+        assert!(why(check_pdf(Cursor::new(b"%PDF".to_vec()))).contains("not a PDF"));
+        assert!(why(check_pdf(Cursor::new(pdf(b"%PDF-1.7", b"")))).contains("not a whole PDF"));
+        // `%%EOF` is looked for in the last bytes only, so a PDF with much after it is refused.
+        let mut cut = pdf(b"%PDF-1.7", b"%%EOF\n");
+        cut.extend_from_slice(&vec![b' '; PDF_TAIL_BYTES as usize]);
+        assert!(why(check_pdf(Cursor::new(cut))).contains("not a whole PDF"));
+    }
+
+    #[test]
+    fn what_is_not_a_recording_is_refused() {
         let dir = std::env::temp_dir().join(format!("bookcheck-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("fake.m4b");
         std::fs::write(&path, "吾輩は猫である。".repeat(1000)).unwrap();
         assert!(why(check(&path, Kind::M4b, Script::Any)).contains("not an M4B"));
         assert!(why(check(&path, Kind::Opus, Script::Any)).contains("not Opus"));
+        assert!(why(check(&path, Kind::Mp4, Script::Any)).contains("not an MP4"));
+        assert!(why(check(&path, Kind::Mkv, Script::Any)).contains("not a Matroska"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The fixtures are silence that ffmpeg made: 1 second, and 10 minutes and 1 second.
+    /// The fixtures are silence and black frames that ffmpeg made: 1 second, and 10 minutes
+    /// and 1 second.
     fn fixture(name: &str) -> std::path::PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
     }
@@ -256,9 +366,23 @@ mod tests {
     }
 
     #[test]
+    fn whole_videos_with_audio_pass() {
+        check(&fixture("video-10m.mp4"), Kind::Mp4, Script::Japanese).unwrap();
+        check(&fixture("video-10m.mkv"), Kind::Mkv, Script::Japanese).unwrap();
+    }
+
+    #[test]
     fn a_short_recording_or_the_wrong_container_is_refused() {
         assert!(why(check(&fixture("silence-1s.opus"), Kind::Opus, Script::Any)).contains("0 minutes long"));
+        assert!(why(check(&fixture("video-1s.mkv"), Kind::Mkv, Script::Any)).contains("0 minutes long"));
         assert!(why(check(&fixture("silence-10m.opus"), Kind::M4b, Script::Any)).contains("not an M4B"));
         assert!(why(check(&fixture("silence-10m.m4b"), Kind::Opus, Script::Any)).contains("not Opus"));
+        assert!(why(check(&fixture("video-10m.mkv"), Kind::Mp4, Script::Any)).contains("not an MP4"));
+        assert!(why(check(&fixture("video-10m.mp4"), Kind::Mkv, Script::Any)).contains("not a Matroska"));
+    }
+
+    #[test]
+    fn a_video_without_audio_is_refused() {
+        assert!(why(check(&fixture("video-mute-10m.mp4"), Kind::Mp4, Script::Any)).contains("audio"));
     }
 }

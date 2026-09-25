@@ -19,7 +19,7 @@
 {%- let flags = account.flags() -%}
 <script>const entryId = {{entry.id}};const entryData = {{entry.data()|json|safe}};</script>
 <div class="entry-info">
-  <h1 class="title">{{ entry.name }}</h1>
+  <h1 class="title{% if entry.flags.is_reviewed() %} reviewed{% endif %}"{% if entry.flags.is_reviewed() %} title="A person has reviewed the subtitles against the book, the audiobook or the video"{% endif %}>{{ entry.name }}</h1>
   {%- if let Some(book_id) = entry.book_id %}
   {%- if let Some(asin) = crate::audible::asin(book_id) %}
   <div class="external-links">
@@ -109,7 +109,7 @@
     {% endif -%}
     <form id="upload-form" method="POST" action="/entry/{{ entry.id }}/upload" enctype="multipart/form-data">
       <label for="upload-file-input" id="upload-button" class="button upload primary">Upload</label>
-      <input name="file" type="file" id="upload-file-input" accept=".srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z,.epub,.m4b,.opus" hidden multiple>
+      <input name="file" type="file" id="upload-file-input" accept=".srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z,.epub,.pdf,.m4b,.opus,.mp4,.mkv" hidden multiple>
     </form>
     {% when None %}
     <a class="button upload primary" href="/login">Login to upload</a>
@@ -153,7 +153,7 @@
 
 <div id="file-upload-drop-zone">
   <h1>Drop subtitles to upload</h1>
-  <p>Supported file types: .srt, .ass, .zip, .sub, .sup, .idx, and with subtitles: .epub, .m4b, .opus</p>
+  <p>Supported file types: .srt, .ass, .zip, .sub, .sup, .idx, and for review: .epub, .pdf, .m4b, .opus, .mp4, .mkv</p>
 </div>
 
 {%- if flags.is_editor() %}
@@ -196,6 +196,11 @@
           <input value="true" {%- if entry.flags.is_unverified() -%}checked{% endif %}
                  name="unverified" id="entry-unverified" type="checkbox">
           <label for="entry-unverified">Unverified</label>
+        </div>
+        <div class="checkbox-container" title="A person has reviewed the subtitles against the book, the audiobook or the video">
+          <input value="true" {%- if entry.flags.is_reviewed() -%}checked{% endif %}
+                 name="reviewed" id="entry-reviewed" type="checkbox">
+          <label for="entry-reviewed">Reviewed</label>
         </div>
         {%- if !crate::CONFIG.get().unwrap().book_site %}
         <div class="checkbox-container">

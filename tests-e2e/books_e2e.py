@@ -80,8 +80,8 @@ check('of two files, the good one goes in and the bad one is named', any('Upload
 
 files = s.get(B + f'/api/entries/{entry}/files')
 
-# --- books (.epub) and audiobooks (.m4b, .opus): each passes its own check, and the entry
-# must have subtitles that pass the check.
+# --- books (.epub, .pdf), audiobooks (.m4b, .opus) and videos (.mp4, .mkv): each passes its
+# own check. They go in alone, or with subtitles, so that a person can review the subtitles.
 import pathlib, struct
 FIX = pathlib.Path(__file__).resolve().parent.parent / 'tests' / 'fixtures'
 NEKO = '吾輩は猫である。名前はまだ無い。'
@@ -98,6 +98,9 @@ def padded_m4b(mb):
     return (FIX / 'silence-10m.m4b').read_bytes() + struct.pack('>I', 8 + n) + b'free' + b'\0' * n
 M4B = (FIX / 'silence-10m.m4b').read_bytes()
 OPUS = (FIX / 'silence-10m.opus').read_bytes()
+MP4 = (FIX / 'video-10m.mp4').read_bytes()
+MKV = (FIX / 'video-10m.mkv').read_bytes()
+PDF = b'%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n'
 def upload_to(eid, files):
     return patient(lambda: s.post(B + f'/entry/{eid}/upload', files=[('file', f) for f in files], headers={'Referer': B + f'/entry/{eid}'}))
 def said(r, words):
@@ -108,14 +111,23 @@ r = patient(lambda: s.post(B + '/entry/create', data={'name': 'bare book %d' % t
 m = re.search(r'/entry/(\d+)', r.url)
 bare = int(m.group(1)) if m else sys.exit(1)
 r = upload_to(bare, [('neko%d.epub' % tag, epub(NEKO * 50), 'application/epub+zip')])
-check('an epub in an entry with no subtitles is refused, with the reason', said(r, 'needs subtitles'), flashes(r.text))
+check('an epub goes alone into an entry that has no subtitles', said(r, 'successful'), flashes(r.text))
 r = upload_to(bare, [('neko%d.m4b' % tag, M4B, 'audio/mp4')])
-check('an m4b in an entry with no subtitles is refused, with the reason', said(r, 'needs subtitles'), flashes(r.text))
-r = upload_to(bare, [('neko%d.epub' % tag, epub(NEKO * 50), 'application/epub+zip'),
-                     ('neko%d.m4b' % tag, M4B, 'audio/mp4'),
-                     ('neko%d.srt' % tag, book(400, NEKO), 'application/x-subrip')])
+check('an m4b goes alone into an entry that has no subtitles', said(r, 'successful'), flashes(r.text))
+r = upload_to(bare, [('neko%d.mp4' % tag, MP4, 'video/mp4')])
+check('an mp4 video goes in alone', said(r, 'successful'), flashes(r.text))
+r = upload_to(bare, [('neko%d.mkv' % tag, MKV, 'video/x-matroska')])
+check('an mkv video goes in alone', said(r, 'successful'), flashes(r.text))
+r = upload_to(bare, [('neko%d.pdf' % tag, PDF, 'application/pdf')])
+check('a pdf goes in alone', said(r, 'successful'), flashes(r.text))
+r = upload_to(bare, [('pair%d.epub' % tag, epub(NEKO * 50), 'application/epub+zip'),
+                     ('pair%d.m4b' % tag, M4B, 'audio/mp4'),
+                     ('pair%d.srt' % tag, book(400, NEKO), 'application/x-subrip')])
 page = s.get(B + f'/entry/{bare}').text
-check('subtitles, an epub and an m4b in one upload are all accepted', said(r, 'successful') and 'neko%d.epub' % tag in page and 'neko%d.m4b' % tag in page, flashes(r.text))
+check('subtitles, an epub and an m4b in one upload are all accepted', said(r, 'successful') and all(('%s%d.%s' % (p, tag, x)) in page for p, x in [('neko', 'epub'), ('neko', 'm4b'), ('neko', 'mp4'), ('neko', 'mkv'), ('neko', 'pdf'), ('pair', 'srt')]), flashes(r.text))
+r = s.get(B + f'/entry/{bare}/download/neko{tag}.mkv', stream=True)
+check('a video downloads whole and is not compressed on the way', r.status_code == 200 and int(r.headers.get('content-length', 0)) == len(MKV) and 'content-encoding' not in r.headers, dict(r.headers))
+r.close()
 
 r = upload_to(entry, [('neko%d.opus' % tag, OPUS, 'audio/ogg')])
 check('an opus audiobook goes into an entry that has good subtitles', said(r, 'successful'), flashes(r.text))
@@ -127,6 +139,14 @@ r = upload_to(entry, [('fake%d.m4b' % tag, book(400, NEKO), 'audio/mp4')])
 check('subtitles named .m4b are refused', said(r, 'not an M4B'), flashes(r.text))
 r = upload_to(entry, [('fake%d.epub' % tag, b'PK\x03\x04 not really', 'application/epub+zip')])
 check('a broken zip named .epub is refused', said(r, 'not an EPUB'), flashes(r.text))
+r = upload_to(entry, [('fake%d.pdf' % tag, book(400, NEKO), 'application/pdf')])
+check('subtitles named .pdf are refused', said(r, 'not a PDF'), flashes(r.text))
+r = upload_to(entry, [('fake%d.mp4' % tag, book(400, NEKO), 'video/mp4')])
+check('subtitles named .mp4 are refused', said(r, 'not an MP4'), flashes(r.text))
+r = upload_to(entry, [('short%d.mkv' % tag, (FIX / 'video-1s.mkv').read_bytes(), 'video/x-matroska')])
+check('a one-second mkv is refused as not the whole recording', said(r, 'minutes long'), flashes(r.text))
+r = upload_to(entry, [('mute%d.mp4' % tag, (FIX / 'video-mute-10m.mp4').read_bytes(), 'video/mp4')])
+check('a video without audio is refused', said(r, 'audio'), flashes(r.text))
 
 big = 'big%d.m4b' % tag
 r = upload_to(entry, [(big, padded_m4b(65), 'audio/mp4')])
@@ -223,6 +243,38 @@ if pride:
     entry = pride
     r = upload([('pride%d.srt' % random.randrange(10**6), book(400, 'It is a truth universally acknowledged.'), 'application/x-subrip')])
     check('English subtitles go into an English book', any('successful' in f.lower() for f in flashes(r.text)), flashes(r.text))
+
+# --- the blue check mark: an editor says that a person has reviewed the subtitles
+import os, sqlite3
+db = os.environ.get('JIMAKU_DB')
+if db:
+    ed = requests.Session(); ed.headers['Referer'] = B + '/'
+    EDITOR = 'reviewer%d' % random.randrange(10**6)
+    # Registration answers with a redirect. Following it would make the first request with the session,
+    # and the server caches the account at that request. So the flag goes into the database first.
+    r = ed.post(B + '/account/authenticate', data={'username': EDITOR, 'password': 'correct horse battery', 'action': 'register', 'session_description': ''}, allow_redirects=False)
+    con = sqlite3.connect(db); con.execute('UPDATE account SET flags = 2 WHERE name = ?', (EDITOR,)); con.commit(); con.close()
+    page = ed.get(B + f'/entry/{bare}').text
+    check('the editor sees a Reviewed box in the edit dialog, not ticked', 'id="entry-reviewed"' in page and 'value="true"checked' not in page.split('name="reviewed"')[0][-80:] and 'class="title"' in page, page.count('entry-reviewed'))
+    def edit_entry(reviewed):
+        data = {'name': 'bare book %d' % tag, 'japanese_name': '', 'english_name': '', 'book_id': 'audiobook.jp bare %d' % tag, 'notes': '', 'anime': 'true'}
+        if reviewed: data['reviewed'] = 'true'
+        return ed.post(B + f'/entry/{bare}/edit', data=data, headers={'Referer': B + f'/entry/{bare}'})
+    r = edit_entry(True)
+    page = s.get(B + f'/entry/{bare}').text
+    home = s.get(B + '/').text
+    check('the editor ticks Reviewed', said(r, 'edited'), (r.status_code, flashes(r.text)))
+    check('the entry page shows the blue check mark beside the title', 'class="title reviewed"' in page and 'reviewed.svg' in s.get(B + '/static/entry.css').text)
+    check('the front page shows the blue check mark beside the name', f'href="/entry/{bare}" class="table-data file-name reviewed"' in home)
+    check('the check mark image is served', s.get(B + '/static/reviewed.svg').status_code == 200)
+    if key:
+        got = api.get(B + f'/api/entries/{bare}').json()
+        check('API: the entry carries reviewed: true', got.get('flags', {}).get('reviewed') is True, got.get('flags'))
+    r = edit_entry(False)
+    page = s.get(B + f'/entry/{bare}').text
+    check('the editor unticks Reviewed, and the mark goes', said(r, 'edited') and 'class="title"' in page and 'title reviewed' not in page, flashes(r.text))
+    r = s.post(B + f'/entry/{bare}/edit', data={'name': 'x', 'japanese_name': '', 'english_name': '', 'notes': '', 'anime': 'true', 'reviewed': 'true'}, headers={'Referer': B + f'/entry/{bare}'})
+    check('a user who is not an editor cannot mark an entry as reviewed', said(r, 'permissions') and 'title reviewed' not in s.get(B + f'/entry/{bare}').text, flashes(r.text))
 
 # the database: the ASIN is a column of its own, the entry is verified, and the file lands in the folder
 if verified:

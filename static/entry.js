@@ -588,7 +588,7 @@ query ($id: Int) {
 `;
 
 const fileExtension = (name) => name.slice((name.lastIndexOf('.') - 1 >>> 0) + 2);
-const allowedExtensions = ["srt", "ssa", "ass", "zip", "sub", "sup", "idx", "7z", "epub", "m4b", "opus"];
+const allowedExtensions = ["srt", "ssa", "ass", "zip", "sub", "sup", "idx", "7z", "epub", "pdf", "m4b", "opus", "mp4", "mkv"];
 
 function filterValidFileList(files) {
   let filtered = Array.from(files).filter(f => allowedExtensions.includes(fileExtension(f.name)));
@@ -712,7 +712,7 @@ async function populateAnimeRelations() {
   if(js.length === 0) return;
   div.innerHTML = '<span>Related</span>';
   for (const entry of js) {
-    let el = html('a.relation.file-name', getPreferredNameForEntry(entry), {
+    let el = html(entry.flags?.reviewed ? 'a.relation.file-name.reviewed' : 'a.relation.file-name', getPreferredNameForEntry(entry), {
       href: `/entry/${entry.id}`,
       dataset: {
         name: entry.name,

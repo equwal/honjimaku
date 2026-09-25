@@ -71,7 +71,9 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
 <div id="content">
   <h1 id="find">Find subtitles</h1>
   <p>Each entry is one audiobook. Type a part of the title, or the Audible ASIN, in the search box on the front page.
-    An entry with "unverified" beside it was added by a user without an Audible ASIN, and no editor has looked at it yet.</p>
+    An entry with "unverified" beside it was added by a user without an Audible ASIN, and no editor has looked at it yet.
+    An entry with a blue check mark <img src="/static/reviewed.svg" width="16" height="16" alt="reviewed"> beside its name
+    has subtitles that a person has reviewed against the book, the audiobook or the video.</p>
 
   <h1 id="use">Use them</h1>
   <p>The files are <code>.srt</code> subtitles whose times fit the audiobook: each line says when the narrator reads it.
@@ -106,11 +108,12 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
     <li>times that make sense: each line ends after it starts, and the lines are in order;</li>
     <li>text that fits its times (not a page of text in one line), in the language of this site.</li>
   </ul>
-  <p>An entry that has such subtitles can also hold the book and the audiobook.
-    Upload them after the subtitles, or in the same upload:</p>
+  <p>An entry can also hold the book, the audiobook or a video, with or without subtitles.
+    A person reviews the subtitles against them, and the entry then gets a blue check mark beside its name:</p>
   <ul>
-    <li>the book as <code>.epub</code> (at most 200 MB), with its text in the language of this site;</li>
-    <li>the audiobook as <code>.m4b</code> or <code>.opus</code> (at most 2 GB), at least 10 minutes long.</li>
+    <li>the book as <code>.epub</code> (at most 200 MB), with its text in the language of this site, or as <code>.pdf</code>;</li>
+    <li>the audiobook as <code>.m4b</code> or <code>.opus</code> (at most 2 GB), at least 10 minutes long;</li>
+    <li>a video as <code>.mp4</code> or <code>.mkv</code> (at most 2 GB), with audio, at least 10 minutes long.</li>
   </ul>
 </div>
 {%- else %}
@@ -140,6 +143,10 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
       <li>
         <span class="badge info" title="Entry originated from an outside source">External</span>
         <span class="explanation">The entry originated from <a href="https://kitsunekko.net">Kitsunekko</a> or <a href="https://jpsubbers.com/">JPSubbers</a>.</span>
+      </li>
+      <li>
+        <img src="/static/reviewed.svg" width="16" height="16" alt="Reviewed" title="A person has reviewed the subtitles against the book, the audiobook or the video">
+        <span class="explanation">A blue check mark beside the name: a person has reviewed the subtitles against the video or the audio.</span>
       </li>
     </ul>
   </p>
@@ -277,6 +284,10 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
       <li><code>.sup</code></li>
       <li><code>.idx</code></li>
     </ul>
+  <p>
+    An entry can also hold the video (<code>.mp4</code>, <code>.mkv</code>), the audio (<code>.m4b</code>, <code>.opus</code>) or the book (<code>.epub</code>, <code>.pdf</code>) that the subtitles belong to,
+    with or without the subtitles. A person reviews the subtitles against them, and the entry then gets the blue check mark.
+  </p>
   <p>
     It is recommended to upload only <code>.srt</code> or <code>.ass</code> files for best results.
     The other file types are provided merely for legacy reasons or for supporting picture based subtitles.

@@ -24,6 +24,18 @@
   word-wrap: break-word;
 }
 
+/* The blue check mark of an entry whose subtitles a person has reviewed. It is drawn by
+   CSS, because the scripts replace the text of the name and would drop a child element. */
+.file-name.reviewed::after, .title.reviewed::after {
+  content: '';
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 0.3em;
+  vertical-align: -0.05em;
+  background: url(/static/reviewed.svg) center / contain no-repeat;
+}
+
 .table-data.bookmark {
   text-align: right;
 }

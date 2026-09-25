@@ -293,7 +293,7 @@ pub fn all() -> Router<AppState> {
 }
 
 /// The upload routes. They take a body of up to `MAX_BOOK_UPLOAD_SIZE` and have one hour to
-/// read it, because an audiobook is large. All other routes keep the small limits of `main`.
+/// read it, because an audiobook or a video is large. All other routes keep the small limits of `main`.
 pub fn uploads() -> Router<AppState> {
     Router::new()
         .merge(entry::upload_routes())

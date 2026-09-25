@@ -101,8 +101,8 @@ pub fn routes() -> Router<AppState> {
         .route_layer(cors())
 }
 
-/// The upload route of the API. It is apart from the others because an audiobook needs a
-/// larger body limit and a longer timeout (see `routes::uploads`).
+/// The upload route of the API. It is apart from the others because an audiobook or a video
+/// needs a larger body limit and a longer timeout (see `routes::uploads`).
 pub fn upload_routes() -> Router<AppState> {
     Router::new()
         .route("/entries/{id}/upload", post(entries::upload_files))
