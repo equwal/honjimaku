@@ -18,8 +18,8 @@
 {%- endfor %}
 <form class="nav-item language-picker" method="get" action="/">
   <select name="lang" aria-label="Books in another language" onchange="this.form.submit()">
-    {%- for (code, name) in crate::language::all() %}
-    <option value="{{ code }}" {% if *code == language %}selected{% endif %}>{{ name }} ({{ code }})</option>
+    {%- for (code, name, count) in languages %}
+    <option value="{{ code }}" {% if *code == language %}selected{% endif %}>{{ name }} ({{ code }}): {{ count }}</option>
     {%- endfor %}
   </select>
   <noscript><button class="button">Go</button></noscript>

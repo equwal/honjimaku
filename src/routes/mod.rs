@@ -47,6 +47,8 @@ where
     language: &'a str,
     /// On a site for books: a tab for each language that has books.
     tabs: Vec<LanguageTab<'a>>,
+    /// On a site for books: each language as (code, name, number of entries), the language with the most entries first.
+    languages: Vec<(&'static str, &'static str, usize)>,
 }
 
 struct LanguageTab<'a> {
@@ -80,7 +82,13 @@ async fn index(
     let entries = state.directory_entries().await;
     let mut bypass_cache = account.is_some();
     let mut tabs = Vec::new();
+    let mut languages = Vec::new();
     if config.book_site {
+        let mut counts = std::collections::HashMap::new();
+        for entry in entries.iter().filter(|e| e.flags.is_anime()) {
+            *counts.entry(entry.language_code(config)).or_insert(0) += 1;
+        }
+        languages = crate::language::by_count(|code| counts.get(code).copied().unwrap_or(0));
         let mut codes: Vec<&str> = entries.iter().map(|e| e.language_code(config)).collect();
         codes.push(config.default_language());
         codes.push(language);
@@ -124,6 +132,7 @@ async fn index(
         editor,
         language,
         tabs,
+        languages,
     };
     cacher
         .cache_template("index", template, encoding, bypass_cache)
@@ -159,6 +168,7 @@ async fn dramas(
         editor,
         language: state.config().default_language(),
         tabs: Vec::new(),
+        languages: Vec::new(),
     };
     cacher
         .cache_template("dramas", template, encoding, bypass_cache)

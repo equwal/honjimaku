@@ -32,6 +32,14 @@ pub fn all() -> &'static [(&'static str, &'static str)] {
     })
 }
 
+/// Each language that has an ISO 639-1 code, as (code, name, count), with the count from `count`.
+/// The language with the most entries is first. Languages with the same count are in the order of their names.
+pub fn by_count(count: impl Fn(&str) -> usize) -> Vec<(&'static str, &'static str, usize)> {
+    let mut languages: Vec<_> = all().iter().map(|&(code, name)| (code, name, count(code))).collect();
+    languages.sort_by_key(|&(_, name, n)| (std::cmp::Reverse(n), name));
+    languages
+}
+
 /// The words of a name in lower case, without the part in brackets:
 /// "Modern Greek (1453-)" is ["modern", "greek"].
 fn words(name: &str) -> Vec<String> {
@@ -68,6 +76,25 @@ mod tests {
             assert_eq!(name(code), language);
         }
         assert!(all().windows(2).all(|w| w[0].1 <= w[1].1));
+    }
+
+    #[test]
+    fn languages_with_more_entries_are_first() {
+        let count = |code: &str| match code {
+            "ja" => 5,
+            "en" | "de" => 2,
+            _ => 0,
+        };
+        let languages = by_count(count);
+        assert_eq!(languages.len(), all().len());
+        let first: Vec<_> = languages.iter().take(3).map(|&(code, _, n)| (code, n)).collect();
+        assert_eq!(first, [("ja", 5), ("en", 2), ("de", 2)]);
+        assert!(
+            languages
+                .iter()
+                .all(|&(code, name, n)| name == super::name(code) && n == count(code))
+        );
+        assert!(languages.windows(2).all(|w| (w[0].2, w[1].1) >= (w[1].2, w[0].1)));
     }
 
     #[test]
