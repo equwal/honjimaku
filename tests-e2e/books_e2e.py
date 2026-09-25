@@ -37,6 +37,11 @@ r = s.post(B + '/entry/create', data={'name': 'another title', 'book_id': BOOK_I
 check('the same audiobook ID again is refused, and the entry is named', any('here already' in f and f'/entry/{entry}' in f for f in flashes(r.text)), flashes(r.text))
 page = s.get(B + f'/entry/{entry}').text
 check('the entry has the clean title, and is marked unverified', TITLE.replace('は', 'は ') in page and 'nverified' in page)
+# The box under the Upload button: the user chooses what to upload, and the file picker then shows only those files.
+menu = page.split('id="upload-menu"', 1)[1].split('</details>', 1)[0] if 'id="upload-menu"' in page else ''
+check('the Upload button opens a choice of subtitles, book, audiobook or video',
+      all('data-accept="%s"' % a in menu for a in ('.srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z', '.epub,.pdf', '.m4b,.opus', '.mp4,.mkv')),
+      re.findall(r'data-accept="[^"]*"', menu))
 
 r = s.post(B + '/entry/create', data={'name': 'Ｗａｇａｈａｉ', 'book_id': '../../etc', 'anime': 'true'})
 check('a bad audiobook ID is refused', any('audiobook ID' in f for f in flashes(r.text)), flashes(r.text))

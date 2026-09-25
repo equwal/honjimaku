@@ -108,7 +108,17 @@
     <button id="edit-entry" class="button">Edit</button>
     {% endif -%}
     <form id="upload-form" method="POST" action="/entry/{{ entry.id }}/upload" enctype="multipart/form-data">
-      <label for="upload-file-input" id="upload-button" class="button upload primary">Upload</label>
+      <details id="upload-menu">
+        <summary id="upload-button" class="button upload primary">Upload</summary>
+        <div class="upload-choices">
+          <span>Choose what you upload:</span>
+          <button type="button" class="button" data-accept=".srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z">Subtitles <small>.srt .ass .ssa .sub .sup .idx .zip .7z</small></button>
+          <button type="button" class="button" data-accept=".epub,.pdf">Book for review <small>.epub .pdf</small></button>
+          <button type="button" class="button" data-accept=".m4b,.opus">Audiobook for review <small>.m4b .opus</small></button>
+          <button type="button" class="button" data-accept=".mp4,.mkv">Video for review <small>.mp4 .mkv</small></button>
+          <span class="upload-drop-hint">To upload files of more than one kind, drop them on this page.</span>
+        </div>
+      </details>
       <input name="file" type="file" id="upload-file-input" accept=".srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z,.epub,.pdf,.m4b,.opus,.mp4,.mkv" hidden multiple>
     </form>
     {% when None %}

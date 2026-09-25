@@ -88,7 +88,8 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <h1 id="share">Share them</h1>
   <ol>
     <li>Make an account (Login, then Register). A user name and a password are all it takes.</li>
-    <li>Search for the book. If it is here, open it and press Upload.</li>
+    <li>Search for the book. If it is here, open it, press Upload, and choose what you upload: the subtitles, or the book,
+      the audiobook or the video for review.</li>
     <li>If it is not, press the upload button on the front page and add the book: the title as the audiobook shop writes it,
       and the ID of the audiobook if there is one (an Audible ASIN such as <code>B0BPXSSWVF</code>, or the Audible URL,
       or an audiobook.jp number). The site checks an Audible ASIN against Audible and takes the title from there, so
@@ -287,6 +288,7 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <p>
     An entry can also hold the video (<code>.mp4</code>, <code>.mkv</code>), the audio (<code>.m4b</code>, <code>.opus</code>) or the book (<code>.epub</code>, <code>.pdf</code>) that the subtitles belong to,
     with or without the subtitles. A person reviews the subtitles against them, and the entry then gets the blue check mark.
+    To upload one of them, press Upload on the entry and choose what you upload.
   </p>
   <p>
     It is recommended to upload only <code>.srt</code> or <code>.ass</code> files for best results.

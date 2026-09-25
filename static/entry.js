@@ -751,6 +751,23 @@ uploadInput?.addEventListener('change', () => {
   uploadForm.submit();
 });
 
+// The box under the Upload button: the user chooses what to upload, and the file picker
+// then shows only the files of that kind.
+const uploadMenu = document.getElementById('upload-menu');
+uploadMenu?.querySelectorAll('button[data-accept]').forEach(button => {
+  button.addEventListener('click', () => {
+    uploadInput.accept = button.dataset.accept;
+    uploadMenu.open = false;
+    uploadInput.click();
+  });
+});
+document.addEventListener('click', (e) => {
+  if(uploadMenu?.open && !uploadMenu.contains(e.target)) uploadMenu.open = false;
+});
+document.addEventListener('keydown', (e) => {
+  if(e.key === 'Escape' && uploadMenu?.open) uploadMenu.open = false;
+});
+
 if(typeof entryId === 'undefined') {
   entryId = null;
 }

@@ -230,6 +230,47 @@ a.relation:not(:last-child)::after {
   content: ': ';
 }
 
+/* The box under the Upload button, where the user chooses what to upload. */
+#upload-menu {
+  position: relative;
+}
+
+#upload-menu > summary {
+  list-style: none;
+}
+
+#upload-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.upload-choices {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  width: max-content;
+  max-width: calc(100vw - 2rem);
+  padding: 0.5rem;
+  background-color: var(--box);
+  border: 1px solid var(--box-border-bright);
+  border-radius: 0.25rem;
+}
+
+.upload-choices > .button {
+  width: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 0.25rem 0.75rem;
+}
+
+.upload-choices small, .upload-choices > .upload-drop-hint {
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
 #file-upload-drop-zone {
   position: fixed;
   top: 0;
