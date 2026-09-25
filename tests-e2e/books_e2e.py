@@ -1,8 +1,8 @@
 """End-to-end check of the book features against a local test server (port 8433)."""
-import io, json, re, sys, zipfile, urllib.parse
+import io, json, os, re, sys, zipfile, urllib.parse
 import requests
 
-B = 'http://localhost:8433'
+B = os.environ.get('JIMAKU_URL', 'http://localhost:8433')
 s = requests.Session()
 s.headers['Referer'] = B + '/'
 
@@ -37,6 +37,11 @@ r = s.post(B + '/entry/create', data={'name': 'another title', 'book_id': BOOK_I
 check('the same audiobook ID again is refused, and the entry is named', any('here already' in f and f'/entry/{entry}' in f for f in flashes(r.text)), flashes(r.text))
 page = s.get(B + f'/entry/{entry}').text
 check('the entry has the clean title, and is marked unverified', TITLE.replace('は', 'は ') in page and 'nverified' in page)
+dialog = re.search(r'<dialog id="upload-modal">(.*?)</dialog>', page, re.S)
+check('the Upload button opens a dialog that names the book, audiobook and video files',
+      '<button type="button" id="upload-button"' in page and bool(dialog)
+      and all(ext in dialog.group(1) for ext in ('.srt', '.epub', '.pdf', '.m4b', '.opus', '.mp4', '.mkv'))
+      and 'for="upload-file-input"' in dialog.group(1))
 
 r = s.post(B + '/entry/create', data={'name': 'Ｗａｇａｈａｉ', 'book_id': '../../etc', 'anime': 'true'})
 check('a bad audiobook ID is refused', any('audiobook ID' in f for f in flashes(r.text)), flashes(r.text))
