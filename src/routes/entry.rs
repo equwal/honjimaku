@@ -56,6 +56,9 @@ pub(crate) struct FileEntry {
 struct EntryTemplate {
     account: Option<Account>,
     entry: DirectoryEntry,
+    /// True if the entry is a book. The edit form of a show on a site for books asks for its
+    /// AniList and TMDB pages, so that an edit keeps them.
+    book: bool,
     bookmarked: bool,
     files: Vec<FileEntry>,
     flashes: Flashes,
@@ -107,9 +110,11 @@ async fn get_entry(
         Some(acc) => state.is_bookmarked(acc.id, entry_id).await,
         None => false,
     };
+    let book = entry.kind_of(state.config()) == Kind::Book;
     Ok(HtmlPage(EntryTemplate {
         account,
         entry,
+        book,
         bookmarked,
         files,
         flashes,
@@ -158,10 +163,13 @@ struct CreateDirectoryEntry {
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     #[serde(default)]
     bangumi_url: Option<String>,
-    /// On a site for books: the ISO 639-1 code of the language of the book.
+    /// On a site for books: the ISO 639-1 code of the language of the book or the show.
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     #[serde(default)]
     language: Option<String>,
+    /// On a site for books: what the tab of the form adds, `book`, `anime` or `drama`.
+    #[serde(default)]
+    kind: Option<Kind>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
 }
@@ -169,8 +177,10 @@ struct CreateDirectoryEntry {
 #[derive(Debug, Default)]
 pub struct PendingDirectoryEntry {
     pub book_id: Option<String>,
-    /// On a site for books: the ISO 639-1 code of the language of the book. None is the language of the site.
+    /// On a site for books: the ISO 639-1 code of the language of the book or the show. None is the language of the site.
     pub language: Option<String>,
+    /// On a site for books: what the entry is, as the tab of the form says. None: see [`is_new_book`].
+    pub kind: Option<Kind>,
     pub bangumi_id: Option<u32>,
     pub anilist_id: Option<u32>,
     pub tmdb_id: Option<tmdb::Id>,
@@ -189,6 +199,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
             name: value.name,
             book_id: value.book_id,
             language: value.language,
+            kind: value.kind,
             bangumi_id: value.bangumi_url.as_deref().and_then(crate::bangumi::subject_id),
             anime: value.anime,
             notes: None,
@@ -306,6 +317,28 @@ pub fn directory_entry_path(ids: PathIds<'_>, name: &str, anime: bool, config: &
     config.subtitle_path.join(directory_name)
 }
 
+/// On a site for books: true if a new entry is a book. The tab of the form says what it is.
+/// Without a kind (the API, an import, a move), an entry that no AniList ID, TMDB ID or given
+/// names mark as a show is a book, as before the site had tabs for shows.
+fn is_new_book(kind: Option<Kind>, anilist: bool, tmdb: bool, titles: bool) -> bool {
+    match kind {
+        Some(kind) => kind == Kind::Book,
+        None => !anilist && !tmdb && !titles,
+    }
+}
+
+/// On a site for books: what a user must give for a new show, if it is missing. AniList
+/// verifies an anime and TMDB a live action show, as on jimaku.cc.
+fn missing_show_page(kind: Kind, anilist: bool, tmdb: bool) -> Option<&'static str> {
+    match kind {
+        Kind::Anime if !anilist => Some("Give the AniList page of the anime (https://anilist.co/anime/...)."),
+        Kind::Drama if !tmdb => Some(
+            "Give the TMDB page of the show or the film (https://www.themoviedb.org/tv/... or https://www.themoviedb.org/movie/...).",
+        ),
+        _ => None,
+    }
+}
+
 pub async fn raw_create_directory_entry(
     state: &AppState,
     account: Account,
@@ -320,7 +353,17 @@ pub async fn raw_create_directory_entry(
 
     let mut pending = pending;
     let book_site = state.config().book_site;
-    if book_site && pending.anilist_id.is_none() && pending.tmdb_id.is_none() && pending.titles.is_none() {
+    let is_book = book_site
+        && is_new_book(
+            pending.kind,
+            pending.anilist_id.is_some(),
+            pending.tmdb_id.is_some(),
+            pending.titles.is_some(),
+        );
+    if is_book {
+        // A book has no AniList or TMDB page.
+        pending.anilist_id = None;
+        pending.tmdb_id = None;
         // A book: the user names it. Say so if the site has it already, so that the
         // subtitles of one book do not end up in two places.
         let mut title = crate::book::clean_title(pending.name.as_deref().unwrap_or("")).map_err(ApiError::new)?;
@@ -409,6 +452,37 @@ pub async fn raw_create_directory_entry(
         }
         pending.name = Some(title);
         pending.language = Some(language);
+    } else if let (true, Some(kind)) = (book_site, pending.kind) {
+        // A show from the Anime or the Live Action tab of a language. AniList or TMDB names
+        // it, and only an editor may name it without that page.
+        pending.anime = kind == Kind::Anime;
+        if !account.flags.is_editor()
+            && let Some(why) = missing_show_page(kind, pending.anilist_id.is_some(), pending.tmdb_id.is_some())
+        {
+            return Err(ApiError::new(why));
+        }
+        let language = match pending.language.as_deref() {
+            None => state.config().default_language(),
+            Some(raw) => crate::language::code(raw)
+                .ok_or_else(|| ApiError::new(format!("\"{raw}\" is not an ISO 639-1 language code.")))?,
+        }
+        .to_owned();
+        // One show in one language, one entry. The copy of another site keeps the language as
+        // a code too, so the unique indexes of the IDs refuse a second entry for the show.
+        let entries = state.directory_entries().await;
+        let same_show = |e: &&DirectoryEntry| {
+            e.language_code(state.config()) == language
+                && ((pending.anilist_id.is_some() && e.anilist_id == pending.anilist_id)
+                    || (pending.tmdb_id.is_some() && e.tmdb_id == pending.tmdb_id))
+        };
+        if let Some(same) = entries.iter().find(same_show) {
+            return Err(ApiError::new(format!(
+                "This show is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
+                same.name, same.id
+            ))
+            .with_code(ApiErrorCode::EntryAlreadyExists));
+        }
+        pending.language = Some(language);
     } else {
         pending.language = None;
     }
@@ -432,7 +506,7 @@ pub async fn raw_create_directory_entry(
 
     let (names, flags) = match pending.get_info(state).await? {
         Some(title) => title,
-        None if account.flags.is_editor() || book_site => {
+        None if account.flags.is_editor() || is_book => {
             if let Some(name) = pending.name.clone() {
                 let mut flags = EntryFlags::new();
                 flags.set_anime(pending.anime);
@@ -456,8 +530,8 @@ pub async fn raw_create_directory_entry(
     };
 
     let query = r#"
-        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id, bangumi_id, language)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, book_id, bangumi_id, language, kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id;
     "#;
     let path_string = path_string.to_owned();
@@ -483,6 +557,7 @@ pub async fn raw_create_directory_entry(
                         pending.book_id,
                         pending.bangumi_id,
                         pending.language,
+                        pending.kind,
                     ),
                     |row| row.get("id"),
                 )
@@ -534,7 +609,7 @@ pub async fn raw_create_directory_entry(
         let alert = crate::discord::Alert::success(title)
             .url(format!("/entry/{entry_id}"))
             .account(account);
-        let alert = if book_site {
+        let alert = if is_book {
             alert.field("Audiobook", book_id.unwrap_or_else(|| String::from("Unknown")))
         } else if state.config().drama_site {
             let bangumi = pending.bangumi_id.map(crate::bangumi::url);
@@ -991,6 +1066,7 @@ async fn move_directory_entries(
                 PendingDirectoryEntry {
                     book_id: payload.book_id.clone(),
                     language: None,
+                    kind: None,
                     bangumi_id: payload.bangumi_id,
                     anilist_id: payload.anilist_id,
                     tmdb_id: payload.tmdb_id,
@@ -2001,6 +2077,7 @@ async fn create_imported_entry(
     let pending = PendingDirectoryEntry {
         book_id: None,
         language: None,
+        kind: None,
         bangumi_id: payload.inner.bangumi_id,
         anilist_id: payload.inner.anilist_id,
         tmdb_id: payload.inner.tmdb_id,
@@ -2116,4 +2193,43 @@ pub fn upload_routes() -> Router<AppState> {
         "/entry/{id}/upload",
         post(upload_file).layer(RateLimit::default().build()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tab_says_what_a_new_entry_is() {
+        for anilist in [false, true] {
+            for tmdb in [false, true] {
+                for titles in [false, true] {
+                    // The tab of the form decides, whatever else the form holds.
+                    assert!(is_new_book(Some(Kind::Book), anilist, tmdb, titles));
+                    assert!(!is_new_book(Some(Kind::Anime), anilist, tmdb, titles));
+                    assert!(!is_new_book(Some(Kind::Drama), anilist, tmdb, titles));
+                }
+            }
+        }
+        // Without a tab (the API, an import, a move), an entry is a book if nothing marks it as a show.
+        assert!(is_new_book(None, false, false, false));
+        assert!(!is_new_book(None, true, false, false));
+        assert!(!is_new_book(None, false, true, false));
+        assert!(!is_new_book(None, false, false, true));
+    }
+
+    #[test]
+    fn a_user_gives_the_page_that_verifies_the_show() {
+        assert!(missing_show_page(Kind::Anime, false, false).is_some_and(|why| why.contains("AniList")));
+        assert!(missing_show_page(Kind::Drama, false, false).is_some_and(|why| why.contains("TMDB")));
+        // A TMDB page does not verify an anime, and an AniList page does not verify a live action show.
+        assert!(missing_show_page(Kind::Anime, false, true).is_some_and(|why| why.contains("AniList")));
+        assert!(missing_show_page(Kind::Drama, true, false).is_some_and(|why| why.contains("TMDB")));
+        assert_eq!(missing_show_page(Kind::Anime, true, false), None);
+        assert_eq!(missing_show_page(Kind::Drama, false, true), None);
+        // Audible or an editor verifies a book, not AniList or TMDB.
+        for (anilist, tmdb) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert_eq!(missing_show_page(Kind::Book, anilist, tmdb), None);
+        }
+    }
 }

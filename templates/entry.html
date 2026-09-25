@@ -170,7 +170,7 @@
       <label for="entry-english-name">English Name</label>
       <input class="form-field" value="{{ entry.english_name|maybe_display }}"
              name="english_name" id="entry-english-name" autocomplete="off" type="text">
-      {%- if crate::CONFIG.get().unwrap().book_site %}
+      {%- if book %}
       <label for="entry-book-id">Audiobook ID (an Audible ASIN or URL is checked against Audible)</label>
       <input class="form-field" value="{{ entry.book_id|maybe_display }}" maxlength="200"
              placeholder="B0BPXSSWVF" name="book_id" id="entry-book-id" autocomplete="off" type="text">
@@ -190,6 +190,10 @@
              pattern="{{ crate::filters::TMDB_PATTERN }}"
              placeholder="https://www.themoviedb.org/tv/12345" name="tmdb_url" id="entry-tmdb-url"
              autocomplete="off" type="text">
+      {%- if crate::CONFIG.get().unwrap().book_site %}
+      {# A copy of a site for Chinese shows keeps its Bangumi subject through an edit. #}
+      <input type="hidden" name="bangumi_id" value="{{ entry.bangumi_id|maybe_display }}">
+      {%- endif %}
       {%- endif %}
       <div class="form-field checkboxes">
         <div class="checkbox-container">
@@ -202,7 +206,7 @@
                  name="reviewed" id="entry-reviewed" type="checkbox">
           <label for="entry-reviewed">Reviewed</label>
         </div>
-        {%- if !crate::CONFIG.get().unwrap().book_site %}
+        {%- if !book %}
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_movie() -%}checked{% endif %}
                  name="movie" id="entry-movie" type="checkbox">
@@ -220,8 +224,8 @@
                  name="anime" id="entry-anime" type="checkbox">
           <label for="entry-anime">Anime</label>
         </div>
-        {%- else if crate::CONFIG.get().unwrap().drama_site %}
-        {# One listing: the flag keeps what it has, so that no entry drops out of the list. #}
+        {%- else if !book %}
+        {# One listing, or a show on a site for books: the flag keeps what it has, so that no entry drops out of its list. #}
         <input type="hidden" name="anime" value="{{ entry.flags.is_anime() }}">
         {%- endif %}
       </div>
@@ -232,7 +236,7 @@
     </div>
     <footer>
       <button id="confirm-edit" class="button primary">Confirm</button>
-      {%- if !crate::CONFIG.get().unwrap().single_listing() %}
+      {%- if !book && !crate::CONFIG.get().unwrap().drama_site %}
       <button id="update-info" type="button" class="button" value="sync">Sync</button>
       {%- endif %}
       <button class="button" value="cancel" formmethod="dialog">Cancel</button>

@@ -327,8 +327,8 @@ pub struct CreatePayload {
     /// a book with that ASIN or title already, its entry is returned and nothing is made.
     #[serde(default)]
     book_id: Option<String>,
-    /// On a site for books: the ISO 639-1 code of the language of the book (`ja`, `en`).
-    /// Without it, the book is in the language of the site.
+    /// On a site for books: the ISO 639-1 code of the language of the book or the show (`ja`, `en`).
+    /// Without it, the entry is in the language of the site.
     #[serde(default)]
     language: Option<String>,
 }
@@ -348,6 +348,8 @@ pub struct CreateEntryResult {
 /// is returned instead.
 ///
 /// An entry becomes an anime entry if an AniList ID is given.
+/// On a site for books, an AniList ID makes an anime and a TMDB ID a live action
+/// show, in `language`. Without either, the entry is a book.
 ///
 /// Note that only API keys bound to editor users can use
 /// fields other than `tmdb_id` and `anilist_id`.
@@ -377,8 +379,10 @@ pub async fn create_entry(
     };
     let anilist_id = payload.anilist_id;
     let tmdb_id = payload.tmdb_id;
-    // On a site for books each user may name a new entry. The other fields stay with editors.
-    let may_name = account.flags.is_editor() || state.config().book_site;
+    let book_site = state.config().book_site;
+    // On a site for books each user may name a new book. A show takes its name from AniList
+    // or TMDB, as on jimaku.cc. The other fields stay with editors.
+    let may_name = account.flags.is_editor() || (book_site && anilist_id.is_none() && tmdb_id.is_none());
     if !account.flags.is_editor()
         && ((payload.name.is_some() && !may_name)
             || payload.japanese_name.is_some()
@@ -388,7 +392,7 @@ pub async fn create_entry(
         return Err(ApiError::forbidden());
     }
 
-    if state.config().book_site && anilist_id.is_none() && tmdb_id.is_none() && payload.flags.is_none() {
+    if book_site && anilist_id.is_none() && tmdb_id.is_none() && payload.flags.is_none() {
         if let Some(name) = &payload.name {
             let title = crate::book::clean_title(name).map_err(ApiError::new)?;
             let key = crate::book::title_key(&title);
@@ -439,6 +443,20 @@ pub async fn create_entry(
         None
     };
 
+    // On a site for books an AniList ID makes an anime and a TMDB ID a live action show, in
+    // the language that the payload gives.
+    let kind = match (book_site, anilist_id, tmdb_id) {
+        (true, Some(_), _) => Some(Kind::Anime),
+        (true, None, Some(_)) => Some(Kind::Drama),
+        _ => None,
+    };
+    let site_language = state.config().default_language().to_owned();
+    let language = match payload.language.as_deref().filter(|_| kind.is_some()) {
+        Some(raw) => crate::language::code(raw)
+            .ok_or_else(|| ApiError::new(format!("\"{raw}\" is not an ISO 639-1 language code.")))?
+            .to_owned(),
+        None => site_language.clone(),
+    };
     let bangumi_id = payload.bangumi_id;
     let pending = PendingDirectoryEntry {
         anime: anilist_id.is_some(),
@@ -447,16 +465,21 @@ pub async fn create_entry(
         bangumi_id,
         titles,
         flags,
+        kind,
+        language: Some(language.clone()),
         ..Default::default()
     };
 
     let entry_id = match raw_create_directory_entry(&state, account, pending, true).await {
         Ok((entry_id, _)) => entry_id,
+        // The entry of the show in the same language. An entry without a language is in the
+        // language of the site.
         Err(e) if e.code == ApiErrorCode::EntryAlreadyExists => state
             .database()
             .get_row(
-                "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR bangumi_id = ? OR name = ?",
-                (anilist_id, tmdb_id, bangumi_id, payload.name),
+                "SELECT id FROM directory_entry
+                 WHERE (anilist_id = ? OR tmdb_id = ? OR bangumi_id = ? OR name = ?) AND COALESCE(language, ?) = ?",
+                (anilist_id, tmdb_id, bangumi_id, payload.name, site_language, language),
                 |row| row.get("id"),
             )
             .await

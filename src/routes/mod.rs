@@ -54,6 +54,9 @@ where
     kinds: Vec<Tab<'a>>,
     /// True if the page lists books. Such a page has the form to add one.
     books: bool,
+    /// True if the editor may import a ZIP here. On a site for books, an import makes a book,
+    /// so only the page of the books has it.
+    zip_import: bool,
 }
 
 struct Tab<'a> {
@@ -141,20 +144,16 @@ async fn index(
                 active: code == language,
             })
             .collect();
-        // A tab for each kind that the language has. The books are what the site is for, so
-        // their tab is always there. A language with books alone needs no such tabs.
+        // A tab for each kind, also when the language has no entry of that kind yet: each
+        // tab has the form to add one (AniList verifies an anime, TMDB a live action show).
         kinds = Kind::ALL
             .into_iter()
-            .filter(|&k| k == Kind::Book || k == kind || has(language, k))
             .map(|k| Tab {
                 href: listing_href(config, language, k),
                 name: k.label(),
                 active: k == kind,
             })
             .collect();
-        if kinds.len() == 1 {
-            kinds.clear();
-        }
     }
     // The cache holds the pages of the language of the site. A copy of jimaku.cc makes its
     // anime and live action pages as large as the ones of jimaku.cc, so they are kept too.
@@ -193,6 +192,7 @@ async fn index(
         languages,
         kinds,
         books: book_site && kind == Kind::Book,
+        zip_import: editor && (!book_site || kind == Kind::Book),
     };
     cacher
         .cache_template(cache_key.unwrap_or("index"), template, encoding, bypass_cache)
@@ -237,6 +237,7 @@ async fn dramas(
         languages: Vec::new(),
         kinds: Vec::new(),
         books: false,
+        zip_import: editor,
     };
     cacher
         .cache_template("dramas", template, encoding, bypass_cache)

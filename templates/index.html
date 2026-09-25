@@ -57,18 +57,15 @@
     <input autocomplete="off" name="search" type="search" id="search-files" placeholder="{{ placeholder }}" spellcheck="false">
     <button type="button" class="clear" tabindex="-1" id="clear-search-filter">✖&#xfe0e;</button>
   </form>
-  {#- On a site for books, only the page of the books adds entries. The shows are a copy of another site. -#}
-  {% if books || !crate::CONFIG.get().unwrap().book_site %}
   {% match account %}
     {% when Some with (account) %}
-    {% if editor %}
+    {% if zip_import %}
     <button id="import-button" class="button import">Import ZIP</button>
     {% endif %}
     <button id="upload-button" data-type="directory" class="button upload primary">Create Folder</button>
     {% when None %}
     <a class="button upload primary" href="/login">Login to upload</a>
   {% endmatch %}
-  {% endif %}
 </div>
 <div class="files" data-columns="2">
   <div class="table-headers">
@@ -86,7 +83,7 @@
 
 <dialog id="upload-modal">
   <form method="post" action="/entry/create" autocomplete="off">
-    {%- if crate::CONFIG.get().unwrap().book_site -%}
+    {%- if books -%}
     <h1>Add a book in {{ crate::language::name(language) }}</h1>
     <div class="form-container">
       <input type="hidden" name="language" value="{{ language }}">
@@ -98,9 +95,18 @@
              placeholder="B0BPXSSWVF" autocomplete="off" type="text">
       <input type="hidden" name="anime" value="true">
     </div>
+    {%- else if crate::CONFIG.get().unwrap().book_site -%}
+    <h1>Add {% if anime %}an anime{% else %}a live action show{% endif %} in {{ crate::language::name(language) }}</h1>
     {%- else -%}
     <h1>Create folder</h1>
+    {%- endif -%}
+    {%- if !books -%}
     <div class="form-container">
+      {%- if crate::CONFIG.get().unwrap().book_site -%}
+      {#- The tab says what the entry is and its language. AniList or TMDB names it. -#}
+      <input type="hidden" name="language" value="{{ language }}">
+      <input type="hidden" name="kind" value="{% if anime %}anime{% else %}drama{% endif %}">
+      {%- endif -%}
       {%- if anime -%}
       <label for="anilist-url">AniList URL</label>
       <input class="form-field" {%- if !editor -%} required {%- endif -%}
@@ -133,7 +139,7 @@
     </footer>
   </form>
 </dialog>
-{% if editor %}
+{% if zip_import %}
 <dialog id="import-modal">
   <form method="post" action="/entry/import" autocomplete="off">
     <h1>Import ZIP</h1>
@@ -171,12 +177,12 @@
 
 {% block body_end %}
 <script src="/static/fuzzysort.min.js"></script>
-{% if editor %}
+{% if zip_import %}
 <script src="/static/zip.min.js"></script>
 {% endif %}
 <script src="/static/files.js"></script>
 <script src="/static/index.js"></script>
-{% if editor %}
+{% if zip_import %}
 <script src="/static/index_import.js"></script>
 {% endif %}
 {% endblock %}

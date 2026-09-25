@@ -34,6 +34,8 @@
             {% block index_nav %}
             {%- if crate::CONFIG.get().unwrap().book_site %}
             <a class="nav-item" href="/">Books</a>
+            <a class="nav-item" href="/?kind=anime">Anime</a>
+            <a class="nav-item" href="/?kind=drama">Live Action</a>
             {%- else if crate::CONFIG.get().unwrap().drama_site %}
             <a class="nav-item" href="/">Dramas</a>
             {%- else %}
