@@ -108,7 +108,7 @@
     <button id="edit-entry" class="button">Edit</button>
     {% endif -%}
     <form id="upload-form" method="POST" action="/entry/{{ entry.id }}/upload" enctype="multipart/form-data">
-      <label for="upload-file-input" id="upload-button" class="button upload primary">Upload</label>
+      <button type="button" id="upload-button" class="button upload primary">Upload</button>
       <input name="file" type="file" id="upload-file-input" accept=".srt,.ass,.ssa,.sub,.sup,.idx,.zip,.7z,.epub,.pdf,.m4b,.opus,.mp4,.mkv" hidden multiple>
     </form>
     {% when None %}
@@ -155,6 +155,32 @@
   <h1>Drop subtitles to upload</h1>
   <p>Supported file types: .srt, .ass, .zip, .sub, .sup, .idx, and for review: .epub, .pdf, .m4b, .opus, .mp4, .mkv</p>
 </div>
+
+{%- if account.is_some() %}
+<dialog id="upload-modal">
+  <form method="dialog">
+    <h1>Upload</h1>
+    <p>
+      Upload subtitles: <code>.srt</code>, <code>.ass</code> or <code>.ssa</code>, image subtitles
+      (<code>.sub</code>, <code>.sup</code>, <code>.idx</code>), or a <code>.zip</code> or <code>.7z</code> of them.
+      The site reads each file and tells you why it refuses one.
+    </p>
+    <p>
+      You can also upload what the subtitles belong to. A person then reviews the subtitles against it,
+      and the entry gets a check mark:
+    </p>
+    <ul>
+      <li>the book: <code>.epub</code> (text in the language of this entry) or <code>.pdf</code>, at most 200 MB;</li>
+      <li>the audiobook: <code>.m4b</code> or <code>.opus</code>, at least 10 minutes, at most 2 GB;</li>
+      <li>the video: <code>.mp4</code> or <code>.mkv</code>, with audio, at least 10 minutes, at most 2 GB.</li>
+    </ul>
+    <footer>
+      <label for="upload-file-input" id="choose-upload-files" class="button primary">Choose files</label>
+      <button class="button" value="cancel">Cancel</button>
+    </footer>
+  </form>
+</dialog>
+{%- endif %}
 
 {%- if flags.is_editor() %}
 <dialog id="edit-entry-modal">

@@ -256,6 +256,15 @@ a.relation:not(:last-child)::after {
   width: 80%;
 }
 
+#upload-modal > form {
+  max-width: 32rem;
+}
+
+#upload-modal ul {
+  padding: 0 1.25rem 0 2.75rem;
+  margin-bottom: 0.75rem;
+}
+
 #rename-entries-modal > form {
   max-width: 100%;
 }

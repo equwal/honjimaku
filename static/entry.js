@@ -751,6 +751,11 @@ uploadInput?.addEventListener('change', () => {
   uploadForm.submit();
 });
 
+// The Upload button first says which files the site takes. "Choose files" opens the file picker.
+const uploadModal = document.getElementById('upload-modal');
+document.getElementById('upload-button')?.addEventListener('click', () => uploadModal?.showModal());
+document.getElementById('choose-upload-files')?.addEventListener('click', () => uploadModal?.close());
+
 if(typeof entryId === 'undefined') {
   entryId = null;
 }
