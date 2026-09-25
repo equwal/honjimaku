@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::{cli::PROGRAM_NAME, discord::Webhook};
+use crate::{cli::PROGRAM_NAME, discord::Webhook, mirror::Mirror};
 use crate::{gofile::Gofile, key::SecretKey};
 
 /// The server configuration.
@@ -76,6 +76,11 @@ pub struct Config {
     /// This is used for uploading backups and is entirely optional.
     #[serde(default)]
     pub gofile: Option<Gofile>,
+    /// The other jimaku sites that this site keeps a live copy of, entry by entry and file
+    /// by file: `[{"url": "https://jimaku.cc", "language": "ja", "api_key": "..."}]`.
+    /// See `mirror`.
+    #[serde(default)]
+    pub mirrors: Vec<Mirror>,
     /// The secret key used for all crypto related functionality in the server.
     ///
     /// Microbenching makes it evident that cloning this without an Arc is around ~4x faster.
@@ -128,6 +133,7 @@ impl Config {
             webhook: None,
             buzzheavier: None,
             gofile: None,
+            mirrors: Vec::new(),
             server: ServerConfig::default(),
             secret_key: SecretKey::random()?,
         })

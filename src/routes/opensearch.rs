@@ -110,7 +110,7 @@ async fn get_suggestions(state: &AppState, anime: bool, query: String) -> Sugges
         .iter()
         .filter_map(|s| {
             search
-                .apply(s)
+                .apply(s, state.config())
                 .map(|score| Suggestion(score, truncate_string(format!("{}: {}", s.id, s.name), 128)))
         })
         .collect::<Vec<_>>();

@@ -1690,6 +1690,7 @@ dependencies = [
  "reqwest",
  "rpassword",
  "rusqlite",
+ "rustix",
  "rustls-acme",
  "sanitise-file-name",
  "serde",

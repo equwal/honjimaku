@@ -7,7 +7,7 @@ use crate::{
     AppState,
     anilist::MediaTitle,
     error::{ApiError, ApiErrorCode},
-    models::{DirectoryEntry, EntryFlags},
+    models::{DirectoryEntry, EntryFlags, Kind},
     relations::{Range as RelationRange, Relations},
     routes::entry::{
         FileEntry, PendingDirectoryEntry, UploadResult, get_file_entries, raw_create_directory_entry, raw_upload_file,
@@ -184,6 +184,18 @@ pub struct SearchQuery {
     /// Return entries that are before this UNIX timestamp (in seconds).
     #[serde(default)]
     pub before: Option<i64>,
+
+    /// Return entries of this kind only: `book`, `anime`, or `drama` (a live action show).
+    ///
+    /// A site for books lists its books under `anime=true`. A client that wants the anime
+    /// alone asks for `kind=anime`. When `kind` is given, `anime` is not looked at.
+    #[serde(default)]
+    pub kind: Option<Kind>,
+
+    /// Return entries in this language only, as an ISO 639-1 code (`ja`, `zh`).
+    #[serde(deserialize_with = "crate::utils::generic_empty_string_is_none")]
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 impl SearchQuery {
@@ -199,8 +211,16 @@ impl SearchQuery {
         max
     }
 
-    pub fn apply(&self, entry: &DirectoryEntry) -> Option<isize> {
-        if self.anime != entry.flags.is_anime() {
+    pub fn apply(&self, entry: &DirectoryEntry, config: &crate::Config) -> Option<isize> {
+        match self.kind {
+            Some(kind) if entry.kind_of(config) != kind => return None,
+            None if self.anime != entry.flags.is_anime() => return None,
+            _ => {}
+        }
+
+        if let Some(language) = self.language.as_deref()
+            && !entry.language_code(config).eq_ignore_ascii_case(language)
+        {
             return None;
         }
 
@@ -258,7 +278,7 @@ pub async fn search_entries(
     let entries = state.directory_entries().await;
     let mut entries = entries
         .iter()
-        .filter_map(|s| query.apply(s).zip(Some(s.clone())))
+        .filter_map(|s| query.apply(s, state.config()).zip(Some(s.clone())))
         .collect::<Vec<_>>();
     entries.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
     Ok(Json(entries.into_iter().map(|(_, entry)| entry).collect()))
@@ -374,10 +394,12 @@ pub async fn create_entry(
             let key = crate::book::title_key(&title);
             // The ASIN of the audiobook names the book better than its title does.
             let asin = payload.book_id.as_deref().and_then(crate::audible::asin);
+            // A book is compared with the books only: a show with the same title is not it.
             let existing = state
                 .directory_entries()
                 .await
                 .iter()
+                .filter(|e| e.kind_of(state.config()) == Kind::Book)
                 .find(|e| {
                     (asin.is_some() && e.book_id == asin)
                         || (!key.is_empty() && crate::book::directory_key(&e.name) == key)

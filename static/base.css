@@ -499,6 +499,18 @@ nav.main-navigation .branding {
   margin-right: auto !important;
 }
 
+/* A thin line between the language tabs and the tabs of what the page lists (books, anime, live action). */
+nav.main-navigation .nav-item.separator {
+  border-left-color: var(--nav-link);
+  opacity: 0.4;
+}
+
+@media (max-width: 480px) {
+  .nav-item.separator {
+    display: none;
+  }
+}
+
 nav.main-navigation .nav-item:not(:last-child) {
   margin-right: 1rem;
 }

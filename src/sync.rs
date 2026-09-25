@@ -68,8 +68,11 @@ pub async fn sync_books(state: &AppState) -> anyhow::Result<usize> {
             flags.set_anime(true); // the listing on the front page
             let tx = con.transaction()?;
             {
+                // OR IGNORE: the mirror of another site makes its entry, then its folder, on
+                // another connection. If that happens between the query above and the scan
+                // of the directory, the folder is not a new book.
                 let mut insert = tx.prepare(
-                    "INSERT INTO directory_entry(path, flags, notes, name, japanese_name, book_id) VALUES (?, ?, 'It is a book', ?, ?, ?)",
+                    "INSERT OR IGNORE INTO directory_entry(path, flags, notes, name, japanese_name, book_id) VALUES (?, ?, 'It is a book', ?, ?, ?)",
                 )?;
                 for (path, name) in &missing {
                     // A folder named "title [B0BPXSSWVF]" carries the ASIN of the audiobook.

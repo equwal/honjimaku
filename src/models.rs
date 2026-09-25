@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use rusqlite::{
     ToSql,
-    types::{FromSql, FromSqlResult, ToSqlOutput, ValueRef},
+    types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef},
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -231,6 +231,62 @@ pub mod expand_flags {
     }
 }
 
+/// What an entry is: a book, an anime, or a live action show.
+///
+/// A site for books has a tab for each kind that has entries in the language of the page:
+/// the books are its own, the shows are a copy of another site (see `mirror`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Book,
+    Anime,
+    /// A live action show: a drama or a film.
+    Drama,
+}
+
+impl Kind {
+    pub const ALL: [Kind; 3] = [Kind::Book, Kind::Anime, Kind::Drama];
+
+    /// The kind in a URL and in the database: `book`, `anime`, `drama`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Kind::Book => "book",
+            Kind::Anime => "anime",
+            Kind::Drama => "drama",
+        }
+    }
+
+    /// The kind that a URL or a row names. `None` if it names no kind.
+    pub fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        Self::ALL
+            .into_iter()
+            .find(|kind| kind.as_str().eq_ignore_ascii_case(raw))
+    }
+
+    /// The name of the tab of the kind.
+    pub fn label(self) -> &'static str {
+        match self {
+            Kind::Book => "Books",
+            Kind::Anime => "Anime",
+            Kind::Drama => "Live Action",
+        }
+    }
+}
+
+impl FromSql for Kind {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let text = value.as_str()?;
+        Self::parse(text).ok_or_else(|| FromSqlError::Other(format!("\"{text}\" is not a kind of entry").into()))
+    }
+}
+
+impl ToSql for Kind {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(self.as_str().into())
+    }
+}
+
 /// An entry that contains subtitles.
 ///
 /// These are typically backed by e.g. an anilist or tmdb entry to
@@ -275,6 +331,9 @@ pub struct DirectoryEntry {
     /// The ISO 639-1 code of the language of the entry. None is the language of the site.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// What the entry is: `book`, `anime` or `drama` (a live action show). None is what the site is for.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
     /// Extra notes that the entry might have.
     ///
     /// Supports a limited set of markdown. Can only be set by editors.
@@ -304,6 +363,7 @@ impl Table for DirectoryEntry {
         "book_id",
         "bangumi_id",
         "language",
+        "kind",
         "notes",
         "english_name",
         "japanese_name",
@@ -326,6 +386,7 @@ impl Table for DirectoryEntry {
             book_id: row.get("book_id")?,
             bangumi_id: row.get("bangumi_id")?,
             language: row.get("language")?,
+            kind: row.get("kind")?,
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
@@ -353,6 +414,8 @@ pub struct DirectoryEntryBackup {
     pub bangumi_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<Kind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -404,6 +467,7 @@ impl DirectoryEntry {
             book_id: Default::default(),
             bangumi_id: Default::default(),
             language: Default::default(),
+            kind: Default::default(),
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
@@ -413,6 +477,19 @@ impl DirectoryEntry {
     /// The ISO 639-1 code of the language of the entry. An entry with none is in the language of the site.
     pub fn language_code<'a>(&'a self, config: &'a crate::Config) -> &'a str {
         self.language.as_deref().unwrap_or(config.default_language())
+    }
+
+    /// What the entry is. An entry with no kind of its own is what the site is for: a book
+    /// on a site for books, else a show, animated or not as its flag says. A book has no
+    /// AniList, TMDB or Bangumi page, so an entry with one is a show on any site.
+    pub fn kind_of(&self, config: &crate::Config) -> Kind {
+        let show = self.anilist_id.is_some() || self.tmdb_id.is_some() || self.bangumi_id.is_some();
+        match self.kind {
+            Some(kind) => kind,
+            None if config.book_site && !show => Kind::Book,
+            None if self.flags.is_anime() => Kind::Anime,
+            None => Kind::Drama,
+        }
     }
 
     /// Returns data safe for embedding into the frontend
@@ -442,6 +519,7 @@ impl DirectoryEntry {
             book_id: self.book_id,
             bangumi_id: self.bangumi_id,
             language: self.language,
+            kind: self.kind,
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
@@ -494,6 +572,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             book_id: value.book_id,
             bangumi_id: value.bangumi_id,
             language: value.language,
+            kind: value.kind,
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,
@@ -899,5 +978,66 @@ mod tests {
         // An API client that does not know the flag leaves it out, and that means false.
         let old: ExpandedEntryFlags = serde_json::from_str(r#"{"anime":true}"#).unwrap();
         assert!(!EntryFlags::from(old).is_reviewed());
+    }
+
+    #[test]
+    fn a_kind_is_named_in_a_url_and_in_the_database() {
+        for kind in Kind::ALL {
+            assert_eq!(Kind::parse(kind.as_str()), Some(kind));
+            assert_eq!(Kind::parse(&format!(" {} ", kind.as_str().to_uppercase())), Some(kind));
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{}\"", kind.as_str()));
+            assert_eq!(
+                serde_json::from_str::<Kind>(&format!("\"{}\"", kind.as_str())).unwrap(),
+                kind
+            );
+        }
+        assert_eq!(Kind::parse("film"), None);
+        assert_eq!(Kind::parse(""), None);
+        assert_eq!(Kind::Drama.label(), "Live Action");
+
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        let back: Kind = connection
+            .query_row("SELECT ?", [Kind::Drama], |row| row.get(0))
+            .unwrap();
+        assert_eq!(back, Kind::Drama);
+        let none: Option<Kind> = connection.query_row("SELECT NULL", [], |row| row.get(0)).unwrap();
+        assert_eq!(none, None);
+        let bad: rusqlite::Result<Kind> = connection.query_row("SELECT 'film'", [], |row| row.get(0));
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn an_entry_without_a_kind_is_what_the_site_is_for() {
+        let mut config = crate::Config::new().unwrap();
+        let mut entry = DirectoryEntry::temporary("x".to_owned());
+        config.book_site = true;
+        assert_eq!(entry.kind_of(&config), Kind::Book);
+        config.book_site = false;
+        assert_eq!(entry.kind_of(&config), Kind::Anime);
+        entry.flags.set_anime(false);
+        assert_eq!(entry.kind_of(&config), Kind::Drama);
+        entry.kind = Some(Kind::Anime);
+        config.book_site = true;
+        assert_eq!(entry.kind_of(&config), Kind::Anime);
+    }
+
+    #[test]
+    fn a_show_on_a_site_for_books_is_not_a_book() {
+        let mut config = crate::Config::new().unwrap();
+        config.book_site = true;
+        let mut anime = DirectoryEntry::temporary("x".to_owned());
+        anime.anilist_id = Some(154587);
+        assert_eq!(anime.kind_of(&config), Kind::Anime);
+        let mut drama = DirectoryEntry::temporary("x".to_owned());
+        drama.flags.set_anime(false);
+        drama.tmdb_id = Some(crate::tmdb::Id::Tv { id: 1 });
+        assert_eq!(drama.kind_of(&config), Kind::Drama);
+        let mut chinese = DirectoryEntry::temporary("x".to_owned());
+        chinese.flags.set_anime(false);
+        chinese.bangumi_id = Some(258207);
+        assert_eq!(chinese.kind_of(&config), Kind::Drama);
+        let mut book = DirectoryEntry::temporary("x".to_owned());
+        book.book_id = Some("B0BPXSSWVF".to_owned());
+        assert_eq!(book.kind_of(&config), Kind::Book);
     }
 }

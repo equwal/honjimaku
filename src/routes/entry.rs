@@ -5,7 +5,7 @@ use crate::download::{DownloadResponse, validate_path};
 use crate::error::{ApiError, ApiErrorCode, InternalError};
 use crate::flash::{FlashMessage, Flasher, Flashes};
 use crate::headers::Referrer;
-use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Report, ReportPayload};
+use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Kind, Report, ReportPayload};
 use crate::ratelimit::RateLimit;
 use crate::subcheck::{self, Script};
 use crate::utils::{FRAGMENT, HtmlPage, is_over_length};
@@ -252,14 +252,14 @@ impl PendingDirectoryEntry {
         }
     }
 
-    fn path(&self, name: &str, anime: bool, state: &AppState) -> PathBuf {
+    fn path(&self, name: &str, anime: bool, config: &crate::Config) -> PathBuf {
         let ids = PathIds {
             anilist_id: self.anilist_id,
             tmdb_id: self.tmdb_id,
             book_id: self.book_id.as_deref(),
             bangumi_id: self.bangumi_id,
         };
-        directory_entry_path(ids, name, anime, state)
+        directory_entry_path(ids, name, anime, config)
     }
 }
 
@@ -271,7 +271,7 @@ pub struct PathIds<'a> {
     pub bangumi_id: Option<u32>,
 }
 
-pub fn directory_entry_path(ids: PathIds<'_>, name: &str, anime: bool, state: &AppState) -> PathBuf {
+pub fn directory_entry_path(ids: PathIds<'_>, name: &str, anime: bool, config: &crate::Config) -> PathBuf {
     let PathIds {
         anilist_id,
         tmdb_id,
@@ -303,7 +303,7 @@ pub fn directory_entry_path(ids: PathIds<'_>, name: &str, anime: bool, state: &A
         }
     };
 
-    state.config().subtitle_path.join(directory_name)
+    config.subtitle_path.join(directory_name)
 }
 
 pub async fn raw_create_directory_entry(
@@ -342,9 +342,11 @@ pub async fn raw_create_directory_entry(
             });
         }
         let entries = state.directory_entries().await;
+        // A book is compared with the books only: a show with the same title is not it.
+        let mut books = entries.iter().filter(|e| e.kind_of(state.config()) == Kind::Book);
         // One audiobook, one entry: the identifier says which book it is better than the title does.
         if let Some(id) = &pending.book_id {
-            if let Some(same) = entries.iter().find(|e| e.book_id.as_ref() == Some(id)) {
+            if let Some(same) = books.clone().find(|e| e.book_id.as_ref() == Some(id)) {
                 return Err(ApiError::new(format!(
                     "This audiobook is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
                     same.name, same.id
@@ -378,7 +380,7 @@ pub async fn raw_create_directory_entry(
         if key.is_empty() {
             return Err(ApiError::new("Give the title of the book."));
         }
-        if let Some(same) = entries.iter().find(|e| crate::book::directory_key(&e.name) == key) {
+        if let Some(same) = books.find(|e| crate::book::directory_key(&e.name) == key) {
             return Err(ApiError::new(format!(
                 "This book is here already: \"{}\" (/entry/{}). Upload your subtitles there.",
                 same.name, same.id
@@ -444,7 +446,7 @@ pub async fn raw_create_directory_entry(
         None => return Err(ApiError::new("Missing anilist_id or tmdb_id for directory.")),
     };
 
-    let path = pending.path(&names.romaji, pending.anime, state);
+    let path = pending.path(&names.romaji, pending.anime, state.config());
     if path.exists() {
         return Err(ApiError::new("Path already exists.").with_code(ApiErrorCode::EntryAlreadyExists));
     }
@@ -761,7 +763,7 @@ async fn edit_directory_entry(
             book_id: payload.book_id.as_deref().or(entry.book_id.as_deref()),
             bangumi_id: payload.bangumi_id.or(entry.bangumi_id),
         };
-        let path = directory_entry_path(ids, payload.name.as_str(), flags.is_anime(), &state);
+        let path = directory_entry_path(ids, payload.name.as_str(), flags.is_anime(), state.config());
         if path.exists() {
             return flasher.add("Path already exists").bail(&url);
         }
@@ -2010,7 +2012,11 @@ async fn create_imported_entry(
     };
 
     // Unfortunately have to pay this cost twice
-    let path = pending.path(pending.titles.as_ref().unwrap().romaji.as_str(), pending.anime, &state);
+    let path = pending.path(
+        pending.titles.as_ref().unwrap().romaji.as_str(),
+        pending.anime,
+        state.config(),
+    );
     let anilist_id = pending.anilist_id;
     let tmdb_id = pending.tmdb_id;
     let account_id = account.id;

@@ -14,6 +14,8 @@ The site is basically a directory listing where every [Entry](#model/entry) repr
 
 Each directory entry has a set of files that can be downloaded.
 
+On a site for books an entry also has a `kind` (`book`, `anime`, or `drama` for a live action show) and a `language` (an ISO 639-1 code). The anime and the live action shows are a live copy of another jimaku site. The search takes `kind` and `language` to narrow the results.
+
 #### TMDB ID
 
 A TMDB ID is encoded in string form in either `tv:id` or `movie:id` form (for example, `tv:1234`). In the future this syntax might be extended to support seasons in a TV show.

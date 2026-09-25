@@ -119,6 +119,10 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
         tokio::spawn(jimaku::kitsunekko::auto_scrape_loop(state.clone()));
         tokio::spawn(jimaku::jpsubbers::auto_scrape_loop(state.clone()));
     }
+    // A live copy of each site in `mirrors`: its shows come here, in its language.
+    for mirror in state.config().mirrors.clone() {
+        tokio::spawn(jimaku::mirror::mirror_loop(state.clone(), mirror));
+    }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
         loop {
@@ -289,34 +293,6 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 7] = [
-    include_str!("../sql/0.sql"),
-    include_str!("../sql/1.sql"),
-    include_str!("../sql/2.sql"),
-    include_str!("../sql/3.sql"),
-    include_str!("../sql/4.sql"),
-    include_str!("../sql/5.sql"),
-    include_str!("../sql/6.sql"),
-];
-
-fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
-    rusqlite::vtab::array::load_module(connection)?;
-    connection.execute_batch("PRAGMA foreign_keys=1;\nPRAGMA journal_mode=wal;")?;
-    // Each worker of the pool runs this at the same time. When a migration is due, the
-    // first worker holds the write lock; the others wait for it, then read the new
-    // version and skip. Without the wait the server fails with "database is locked".
-    connection.busy_timeout(Duration::from_secs(60))?;
-    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-    let version: usize = {
-        let mut stmt = tx.prepare_cached("PRAGMA user_version;")?;
-        stmt.query_row([], |r| r.get(0))?
-    };
-    for migration in MIGRATIONS.iter().skip(version) {
-        tx.execute_batch(migration)?;
-    }
-    tx.commit()
-}
-
 fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: PathBuf) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let date = time::UtcDateTime::now().date();
@@ -422,7 +398,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
 async fn run(command: jimaku::Command) -> anyhow::Result<()> {
     let config = jimaku::Config::load()?;
     let database = jimaku::Database::file(&jimaku::database::directory()?)
-        .with_init(init_db)
+        .with_init(jimaku::database::init)
         .open()
         .await?;
 

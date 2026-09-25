@@ -59,3 +59,8 @@ tracing-subscriber = { version = "0.3.18", features = ["json"] }
 utoipa = { version = "5.4", features = ["time", "axum_extras", "repr", "preserve_path_order"] }
 zip = "8.6"
 zstd = "0.13.3"
+
+# The mirror of another site stops before the disk is full. The standard library has no
+# call for the free space of a disk, and rustix is in the tree already.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }

@@ -537,6 +537,47 @@ impl<'conn> Transaction<'conn> {
     }
 }
 
+/// The changes to the schema, in order. `init` runs the ones that the database does not have yet.
+pub const MIGRATIONS: [&str; 8] = [
+    include_str!("../sql/0.sql"),
+    include_str!("../sql/1.sql"),
+    include_str!("../sql/2.sql"),
+    include_str!("../sql/3.sql"),
+    include_str!("../sql/4.sql"),
+    include_str!("../sql/5.sql"),
+    include_str!("../sql/6.sql"),
+    include_str!("../sql/7.sql"),
+];
+
+/// Makes a connection ready for the server: loads the modules, sets the pragmas, and runs
+/// the migrations that the database does not have yet.
+pub fn init(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+    rusqlite::vtab::array::load_module(connection)?;
+    // sql/7.sql makes the table directory_entry again. With the foreign keys on, its DROP
+    // TABLE would delete the rows of the other tables that point at the old table (the
+    // bookmarks, the notifications). So they are off until the migrations are done, then
+    // checked, as https://sqlite.org/lang_altertable.html#otheralter says. A pragma does
+    // not change inside a transaction, so this is before it.
+    connection.execute_batch("PRAGMA foreign_keys=0;\nPRAGMA journal_mode=wal;")?;
+    // Each worker of the pool runs this at the same time. When a migration is due, the
+    // first worker holds the write lock; the others wait for it, then read the new
+    // version and skip. Without the wait the server fails with "database is locked".
+    connection.busy_timeout(std::time::Duration::from_secs(60))?;
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: usize = tx.query_row("PRAGMA user_version;", [], |r| r.get(0))?;
+    for migration in MIGRATIONS.iter().skip(version) {
+        tx.execute_batch(migration)?;
+    }
+    tx.commit()?;
+    if version < MIGRATIONS.len() {
+        let broken: i64 = connection.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+        if broken > 0 {
+            warn!("{broken} rows point at a row that is not there after the migrations");
+        }
+    }
+    connection.execute_batch("PRAGMA foreign_keys=1;")
+}
+
 /// Checks whether an error is a unique constraint violation.
 pub fn is_unique_constraint_violation(e: &rusqlite::Error) -> bool {
     match e {
@@ -622,5 +663,71 @@ mod tests {
     fn test_update_query_creation() {
         let query = Foo::update_query(["name", "age"]);
         assert_eq!(query, "UPDATE foo SET name = ?, age = ? WHERE id = ?");
+    }
+
+    /// sql/7.sql makes the table directory_entry again. The rows of the other tables that
+    /// point at an entry must stay: bookmarks, notifications, reports, the audit log.
+    #[test]
+    fn the_rows_that_point_at_an_entry_stay_when_the_table_is_made_again() {
+        let path = std::env::temp_dir().join(format!("honjimaku-migration-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut connection = rusqlite::Connection::open(&path).unwrap();
+        connection.execute_batch("PRAGMA foreign_keys=1;").unwrap();
+        for migration in &MIGRATIONS[..7] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO account(id, name, password) VALUES (1, 'reader', 'x');
+                 INSERT INTO directory_entry(id, path, name, anilist_id) VALUES (5, '/s/a', 'A', 19);
+                 INSERT INTO directory_entry(id, path, name, book_id) VALUES (6, '/s/b', 'B', 'B0BPXSSWVF');
+                 INSERT INTO bookmark(user_id, entry_id) VALUES (1, 5);
+                 INSERT INTO notification(ts, entry_id, user_id, payload) VALUES (1, 5, 1, '{}');
+                 INSERT INTO report(id, account_id, entry_id, reason) VALUES (1, 1, 5, 'why');
+                 INSERT INTO audit_log(id, entry_id, account_id, data) VALUES (1, 5, 1, '{}');",
+            )
+            .unwrap();
+
+        init(&mut connection).unwrap();
+
+        let one = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(one("PRAGMA user_version"), MIGRATIONS.len() as i64);
+        assert_eq!(one("PRAGMA foreign_keys"), 1, "the foreign keys are on again");
+        assert_eq!(one("SELECT count(*) FROM directory_entry"), 2);
+        assert_eq!(one("SELECT count(*) FROM bookmark WHERE entry_id = 5"), 1);
+        assert_eq!(one("SELECT count(*) FROM notification WHERE entry_id = 5"), 1);
+        assert_eq!(one("SELECT count(*) FROM report WHERE entry_id = 5"), 1);
+        assert_eq!(one("SELECT count(*) FROM audit_log WHERE entry_id = 5"), 1);
+        assert_eq!(one("SELECT count(*) FROM pragma_foreign_key_check"), 0);
+
+        // One show can be here once in each language.
+        let add = |path: &str, language: Option<&str>| {
+            connection.execute(
+                "INSERT INTO directory_entry(path, name, anilist_id, language, kind) VALUES (?, 'A', 19, ?, 'anime')",
+                (path, language),
+            )
+        };
+        add("/s/a-zh", Some("zh")).unwrap();
+        assert!(add("/s/a-zh-again", Some("zh")).is_err());
+        assert!(add("/s/a-again", None).is_err(), "no language is one language too");
+        // One audiobook is one entry, in any language.
+        let book = connection.execute(
+            "INSERT INTO directory_entry(path, name, book_id, language) VALUES ('/s/b-en', 'B', 'B0BPXSSWVF', 'en')",
+            [],
+        );
+        assert!(book.is_err());
+        // The mirror table points at an entry, and goes with it.
+        connection
+            .execute_batch(
+                "INSERT INTO mirror(site, remote_id, entry_id) VALUES ('jimaku.cc', 1, 5);
+                 DELETE FROM directory_entry WHERE id = 5;",
+            )
+            .unwrap();
+        let one = |sql: &str| -> i64 { connection.query_row(sql, [], |row| row.get(0)).unwrap() };
+        assert_eq!(one("SELECT count(*) FROM mirror"), 0);
+        assert_eq!(one("SELECT count(*) FROM bookmark"), 0);
+
+        drop(connection);
+        std::fs::remove_file(&path).unwrap();
     }
 }

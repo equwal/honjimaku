@@ -4,7 +4,7 @@ use crate::{
     filters,
     flash::Flashes,
     headers::{AcceptEncoding, UserAgent},
-    models::{Account, AccountCheck},
+    models::{Account, AccountCheck, Kind},
     utils::HtmlPage,
 };
 use askama::Template;
@@ -29,6 +29,7 @@ mod relations;
 mod report;
 
 pub use api::{ApiToken, SearchQuery, copy_api_token};
+pub(crate) use entry::{PathIds, directory_entry_path};
 pub(crate) use report::RichReport;
 
 #[derive(Template)]
@@ -45,13 +46,17 @@ where
     editor: bool,
     /// On a site for books: the ISO 639-1 code of the language that the page lists.
     language: &'a str,
-    /// On a site for books: a tab for each language that has books.
-    tabs: Vec<LanguageTab<'a>>,
+    /// On a site for books: a tab for each language that has entries.
+    tabs: Vec<Tab<'a>>,
     /// On a site for books: each language as (code, name, number of entries), the language with the most entries first.
     languages: Vec<(&'static str, &'static str, usize)>,
+    /// On a site for books: a tab for each kind of entry that the language has (books, anime, live action).
+    kinds: Vec<Tab<'a>>,
+    /// True if the page lists books. Such a page has the form to add one.
+    books: bool,
 }
 
-struct LanguageTab<'a> {
+struct Tab<'a> {
     href: String,
     name: &'a str,
     active: bool,
@@ -60,6 +65,23 @@ struct LanguageTab<'a> {
 #[derive(serde::Deserialize)]
 struct ListingQuery {
     lang: Option<String>,
+    kind: Option<String>,
+}
+
+/// The address of a listing on a site for books. The books in the language of the site are at "/".
+fn listing_href(config: &crate::Config, language: &str, kind: Kind) -> String {
+    let mut query = Vec::with_capacity(2);
+    if language != config.default_language() {
+        query.push(format!("lang={language}"));
+    }
+    if kind != Kind::Book {
+        query.push(format!("kind={}", kind.as_str()));
+    }
+    if query.is_empty() {
+        String::from("/")
+    } else {
+        format!("/?{}", query.join("&"))
+    }
 }
 
 async fn index(
@@ -71,7 +93,8 @@ async fn index(
     Extension(cacher): Extension<BodyCache>,
 ) -> axum::response::Response {
     let config = state.config();
-    // A site for books has a tab for each language. The language of the site is at "/".
+    // A site for books has a tab for each language, and under it a tab for each kind of
+    // entry. The books in the language of the site are at "/".
     let language = match query.lang.as_deref().filter(|_| config.book_site) {
         None => config.default_language(),
         Some(raw) => match crate::language::code(raw) {
@@ -79,13 +102,21 @@ async fn index(
             None => return Redirect::to("/").into_response(),
         },
     };
+    let kind = match query.kind.as_deref().filter(|_| config.book_site) {
+        None => Kind::Book,
+        Some(raw) => match Kind::parse(raw) {
+            Some(kind) => kind,
+            None => return Redirect::to("/").into_response(),
+        },
+    };
     let entries = state.directory_entries().await;
     let mut bypass_cache = account.is_some();
     let mut tabs = Vec::new();
+    let mut kinds = Vec::new();
     let mut languages = Vec::new();
     if config.book_site {
         let mut counts = std::collections::HashMap::new();
-        for entry in entries.iter().filter(|e| e.flags.is_anime()) {
+        for entry in entries.iter() {
             *counts.entry(entry.language_code(config)).or_insert(0) += 1;
         }
         languages = crate::language::by_count(|code| counts.get(code).copied().unwrap_or(0));
@@ -96,46 +127,75 @@ async fn index(
         codes.dedup();
         // The language of the site is the first tab. The others follow in the order of their names.
         codes.sort_by_key(|&code| (code != config.default_language(), crate::language::name(code)));
+        let has = |code: &str, wanted: Kind| {
+            entries
+                .iter()
+                .any(|e| e.language_code(config) == code && e.kind_of(config) == wanted)
+        };
+        // The tab of a language opens the same kind of entry, if that language has it. Else it opens the books.
         tabs = codes
             .into_iter()
-            .map(|code| LanguageTab {
-                href: if code == config.default_language() {
-                    String::from("/")
-                } else {
-                    format!("/?lang={code}")
-                },
+            .map(|code| Tab {
+                href: listing_href(config, code, if has(code, kind) { kind } else { Kind::Book }),
                 name: crate::language::name(code),
                 active: code == language,
             })
             .collect();
-        // The cache holds one page, the page of the language of the site.
-        bypass_cache |= language != config.default_language();
+        // A tab for each kind that the language has. The books are what the site is for, so
+        // their tab is always there. A language with books alone needs no such tabs.
+        kinds = Kind::ALL
+            .into_iter()
+            .filter(|&k| k == Kind::Book || k == kind || has(language, k))
+            .map(|k| Tab {
+                href: listing_href(config, language, k),
+                name: k.label(),
+                active: k == kind,
+            })
+            .collect();
+        if kinds.len() == 1 {
+            kinds.clear();
+        }
     }
+    // The cache holds the pages of the language of the site. A copy of jimaku.cc makes its
+    // anime and live action pages as large as the ones of jimaku.cc, so they are kept too.
+    let cache_key = match kind {
+        _ if language != config.default_language() => None,
+        Kind::Book => Some("index"),
+        Kind::Anime => Some("index-anime"),
+        Kind::Drama => Some("index-drama"),
+    };
+    bypass_cache |= cache_key.is_none();
     let book_site = config.book_site;
     let editor = account.flags().is_editor();
     // A site for dramas lists every entry here, and its form asks for a TMDB page.
     let drama_site = config.drama_site;
-    let url = if language == config.default_language() {
+    let href = listing_href(config, language, kind);
+    let url = if href == "/" {
         config.canonical_url()
     } else {
-        config.url_to(format!("/?lang={language}"))
+        config.url_to(href)
     };
     let template = ListingTemplate {
         account,
-        entries: entries
-            .iter()
-            .filter(|e| drama_site || e.flags.is_anime())
-            .filter(|e| !book_site || e.language_code(config) == language),
+        entries: entries.iter().filter(|e| {
+            if book_site {
+                e.language_code(config) == language && e.kind_of(config) == kind
+            } else {
+                drama_site || e.flags.is_anime()
+            }
+        }),
         flashes,
         url,
-        anime: !drama_site,
+        anime: if book_site { kind != Kind::Drama } else { !drama_site },
         editor,
         language,
         tabs,
         languages,
+        kinds,
+        books: book_site && kind == Kind::Book,
     };
     cacher
-        .cache_template("index", template, encoding, bypass_cache)
+        .cache_template(cache_key.unwrap_or("index"), template, encoding, bypass_cache)
         .await
         .into_response()
 }
@@ -148,12 +208,18 @@ async fn dramas(
     RawQuery(query): RawQuery,
     Extension(cacher): Extension<BodyCache>,
 ) -> axum::response::Response {
-    // A site for books or for dramas has one listing.
+    // A site for books or for dramas has one listing. On a site for books the live action
+    // shows are a kind of entry under each language.
     if state.config().single_listing() {
-        let to = match query {
-            Some(query) => format!("/?{query}"),
-            None => String::from("/"),
+        let mut to = if state.config().book_site {
+            String::from("/?kind=drama")
+        } else {
+            String::from("/")
         };
+        if let Some(query) = query {
+            to.push(if to.contains('?') { '&' } else { '?' });
+            to.push_str(&query);
+        }
         return Redirect::permanent(&to).into_response();
     }
     let entries = state.directory_entries().await;
@@ -169,6 +235,8 @@ async fn dramas(
         language: state.config().default_language(),
         tabs: Vec::new(),
         languages: Vec::new(),
+        kinds: Vec::new(),
+        books: false,
     };
     cacher
         .cache_template("dramas", template, encoding, bypass_cache)
@@ -197,10 +265,13 @@ async fn webmanifest(State(state): State<AppState>) -> impl IntoResponse {
 #[template(path = "help.html")]
 struct HelpTemplate {
     account: Option<Account>,
+    /// The sites that this site keeps a copy of. The help names them.
+    mirrors: &'static [crate::mirror::Mirror],
 }
 
 async fn help_page(account: Option<Account>) -> impl IntoResponse {
-    HtmlPage(HelpTemplate { account })
+    let mirrors = crate::CONFIG.get().map(|c| c.mirrors.as_slice()).unwrap_or(&[]);
+    HtmlPage(HelpTemplate { account, mirrors })
 }
 
 #[derive(Template)]

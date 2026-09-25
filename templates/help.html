@@ -74,6 +74,12 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
     An entry with "unverified" beside it was added by a user without an Audible ASIN, and no editor has looked at it yet.
     An entry with a blue check mark <img src="/static/reviewed.svg" width="16" height="16" alt="reviewed"> beside its name
     has subtitles that a person has reviewed against the book, the audiobook or the video.</p>
+  {%- if !mirrors.is_empty() %}
+  <p>The tabs name the languages. Under a language, <b>Books</b> are the audiobooks of this site. <b>Anime</b> and
+    <b>Live Action</b> hold a copy of the subtitles of
+    {% for mirror in mirrors %}{% if !loop.first %} and {% endif %}<a href="{{ mirror.url }}">{{ mirror.host() }}</a>{% endfor %},
+    refreshed once an hour, so that they stay here if that site goes away. Upload to such an entry as to any other.</p>
+  {%- endif %}
 
   <h1 id="use">Use them</h1>
   <p>The files are <code>.srt</code> subtitles whose times fit the audiobook: each line says when the narrator reads it.

@@ -24,6 +24,7 @@ pub mod key;
 pub mod kitsunekko;
 pub mod language;
 pub mod logging;
+pub mod mirror;
 pub mod models;
 pub mod notification;
 pub mod ratelimit;
