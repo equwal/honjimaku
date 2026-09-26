@@ -440,6 +440,21 @@ footer > .links > a:hover {
   color: var(--nav-link-hover);
 }
 
+/* The links to the other sites and apps of the operator. */
+footer > .more-sites {
+  clear: both;
+  padding: 0 0.5rem 0.5rem;
+  font-size: 14px;
+}
+
+footer > .more-sites > a {
+  color: var(--nav-link);
+}
+
+footer > .more-sites > a:hover {
+  color: var(--nav-link-hover);
+}
+
 .grid-item {
   max-width: 100vw;
   padding: 0.75rem;
