@@ -344,6 +344,10 @@ const auditLogTypes = Object.freeze({
         } else {
           return html('li', `Changed ${title} from `, html('span.before', before), ' to ', html('span.after', after));
         }
+      case 'other_names':
+        return html('li', 'Changed the other names from ',
+                    html('span.before', (before ?? []).join(' · ') || 'none'), ' to ',
+                    html('span.after', (after ?? []).join(' · ') || 'none'));
       case 'notes':
         if(before == null && after != null) {
           return html('li', 'Set the notes to ', html('code.after', html('pre', after)));

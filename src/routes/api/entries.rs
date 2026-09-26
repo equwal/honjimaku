@@ -208,6 +208,9 @@ impl SearchQuery {
         if let Some(target) = entry.japanese_name.as_deref() {
             max = max.max(sublime_fuzzy::best_match(query, target));
         }
+        for target in &entry.other_names {
+            max = max.max(sublime_fuzzy::best_match(query, target));
+        }
         max
     }
 
@@ -546,4 +549,33 @@ pub async fn upload_files(
         return Err(ApiError::new("Upload failed"));
     }
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_search_finds_an_entry_by_an_other_name() {
+        let mut config = crate::Config::new().unwrap();
+        config.book_site = true;
+        let search = |query: &str| SearchQuery {
+            anime: true,
+            query: Some(query.to_owned()),
+            ..Default::default()
+        };
+        let mut book = DirectoryEntry::temporary("[1巻] 転生したらスライムだった件 1".to_owned());
+        assert_eq!(search("tensei shitara").apply(&book, &config), None);
+        book.other_names = vec![
+            "Tensei Shitara Slime Datta Ken 1".to_owned(),
+            "关于我转生变成史莱姆这档事".to_owned(),
+        ];
+        assert!(search("tensei shitara").apply(&book, &config).is_some());
+        assert!(search("史莱姆").apply(&book, &config).is_some());
+        assert!(
+            search("転生したら").apply(&book, &config).is_some(),
+            "the name is found as before"
+        );
+        assert_eq!(search("frieren").apply(&book, &config), None);
+    }
 }

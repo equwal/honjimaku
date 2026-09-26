@@ -538,7 +538,7 @@ impl<'conn> Transaction<'conn> {
 }
 
 /// The changes to the schema, in order. `init` runs the ones that the database does not have yet.
-pub const MIGRATIONS: [&str; 8] = [
+pub const MIGRATIONS: [&str; 9] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
@@ -547,6 +547,7 @@ pub const MIGRATIONS: [&str; 8] = [
     include_str!("../sql/5.sql"),
     include_str!("../sql/6.sql"),
     include_str!("../sql/7.sql"),
+    include_str!("../sql/8.sql"),
 ];
 
 /// Makes a connection ready for the server: loads the modules, sets the pragmas, and runs

@@ -85,6 +85,11 @@
   margin-left: 0.5rem;
 }
 
+.also-known-as {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+}
+
 .files[data-columns="2"] {
   grid-template-columns: repeat(2, auto);
 }

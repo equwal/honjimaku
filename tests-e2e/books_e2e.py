@@ -281,6 +281,26 @@ if db:
     r = s.post(B + f'/entry/{bare}/edit', data={'name': 'x', 'japanese_name': '', 'english_name': '', 'notes': '', 'anime': 'true', 'reviewed': 'true'}, headers={'Referer': B + f'/entry/{bare}'})
     check('a user who is not an editor cannot mark an entry as reviewed', said(r, 'permissions') and 'title reviewed' not in s.get(B + f'/entry/{bare}').text, flashes(r.text))
 
+    # --- other names: the romaji and the title of the English edition. The search finds the book by each.
+    ROMAJI, ENGLISH, OTHER = 'Hadaka no Hon %d' % tag, 'The Bare Book, Vol. %d' % tag, '裸の本 %d' % tag
+    r = ed.post(B + f'/entry/{bare}/edit', data={'name': 'bare book %d' % tag, 'japanese_name': '', 'english_name': ENGLISH, 'other_names': f'{ROMAJI}\r\n\r\n {OTHER} \r\n{ROMAJI}',
+                                                'book_id': 'audiobook.jp bare %d' % tag, 'notes': '', 'anime': 'true'}, headers={'Referer': B + f'/entry/{bare}'})
+    page = s.get(B + f'/entry/{bare}').text
+    check('the editor gives the romaji, another title and the English name', said(r, 'edited') and f'{ENGLISH} · {ROMAJI} · {OTHER}' in page, flashes(r.text))
+    check('the edit dialog shows the other names one on each line', f'{ROMAJI}\n{OTHER}</textarea>' in ed.get(B + f'/entry/{bare}').text)
+    check('the front page carries the other names for the search', f'{ROMAJI}' in s.get(B + '/').text)
+    if key:
+        found = [e['id'] for e in api.get(B + '/api/entries/search', params={'query': ROMAJI.lower()}).json()]
+        check('API: the search finds the book by its romaji', bare in found, found[:5])
+        found = [e['id'] for e in api.get(B + '/api/entries/search', params={'query': 'bare book, vol. %d' % tag}).json()]
+        check('API: the search finds the book by its English name', bare in found, found[:5])
+        got = api.get(B + f'/api/entries/{bare}').json()
+        check('API: the entry carries its other names, each once', got.get('other_names') == [ROMAJI, OTHER], got.get('other_names'))
+    r = edit_entry(False)
+    check('an edit without the field keeps the other names', said(r, 'edited') and ROMAJI in s.get(B + f'/entry/{bare}').text, flashes(r.text))
+    logs = ed.get(B + '/audit-logs', params={'entry_id': bare}).text
+    check('the audit log has the change of the other names', 'other_names' in logs and ROMAJI in logs, logs[:200])
+
 # the database: the ASIN is a column of its own, the entry is verified, and the file lands in the folder
 if verified:
     entry = verified

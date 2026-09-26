@@ -89,6 +89,10 @@
     {% endif -%}
   </div>
 </div>
+{%- let also = entry.also_known_as() %}
+{%- if !also.is_empty() %}
+<p class="also-known-as">{{ also.join(" · ") }}</p>
+{%- endif %}
 <div id="relations"></div>
 {% match entry.notes -%}
   {% when Some with (notes) -%}
@@ -196,6 +200,9 @@
       <label for="entry-english-name">English Name</label>
       <input class="form-field" value="{{ entry.english_name|maybe_display }}"
              name="english_name" id="entry-english-name" autocomplete="off" type="text">
+      <label for="entry-other-names">Other names, one on each line: romaji, pinyin, a title in another language. The search finds the entry by each name.</label>
+      <textarea class="form-field" name="other_names" id="entry-other-names" rows="3"
+                maxlength="4096" autocomplete="off">{{ entry.other_names_text() }}</textarea>
       {%- if book %}
       <label for="entry-book-id">Audiobook ID (an Audible ASIN or URL is checked against Audible)</label>
       <input class="form-field" value="{{ entry.book_id|maybe_display }}" maxlength="200"

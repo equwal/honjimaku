@@ -496,8 +496,8 @@ async fn make(site: &Site<'_>, mirror: &Mirror, host: &str, entry: &RemoteEntry)
         entry.bangumi_id,
         entry.notes(mirror),
         entry.name.clone(),
-        entry.english_name.clone(),
-        entry.japanese_name.clone(),
+        known_name(&entry.english_name),
+        known_name(&entry.japanese_name),
         mirror.language.clone(),
         entry.kind(),
     );
@@ -562,8 +562,21 @@ async fn make(site: &Site<'_>, mirror: &Mirror, host: &str, entry: &RemoteEntry)
     Ok(local)
 }
 
+/// A name that the site has: not missing, not empty.
+fn known_name(name: &Option<String>) -> Option<String> {
+    name.as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
 /// Writes what the site says about the entry over what the entry here says, when it
 /// differs: the names, the flags, the IDs, the notes. Returns true if something changed.
+///
+/// Two things stay as they are here. The kind: the site gives it when the copy is made,
+/// then an editor here can put the copy in the other tab. dung.live, for one, calls each
+/// entry that it made from a folder an anime. And a name that the site does not have:
+/// an editor here can add the English name of a show that has none on the site.
 async fn update_details(
     site: &Site<'_>,
     mirror: &Mirror,
@@ -573,12 +586,15 @@ async fn update_details(
     let mut flags = entry.flags;
     // An editor here marks the subtitles that a person reviewed. The site does not know that mark.
     flags.set_reviewed(local.flags.is_reviewed());
+    let kind = local.kind.or(Some(entry.kind()));
+    flags.set_anime(kind == Some(Kind::Anime));
     let notes = Some(entry.notes(mirror));
     let language = Some(mirror.language.clone());
-    let kind = Some(entry.kind());
+    let english_name = known_name(&entry.english_name).or_else(|| local.english_name.clone());
+    let japanese_name = known_name(&entry.japanese_name).or_else(|| local.japanese_name.clone());
     let same = local.name == entry.name
-        && local.english_name == entry.english_name
-        && local.japanese_name == entry.japanese_name
+        && local.english_name == english_name
+        && local.japanese_name == japanese_name
         && local.flags == flags
         && local.anilist_id == entry.anilist_id
         && local.tmdb_id == entry.tmdb_id
@@ -597,8 +613,8 @@ async fn update_details(
              WHERE id = ?",
             (
                 entry.name.clone(),
-                entry.english_name.clone(),
-                entry.japanese_name.clone(),
+                english_name.clone(),
+                japanese_name.clone(),
                 flags,
                 entry.anilist_id,
                 entry.tmdb_id,
@@ -611,8 +627,8 @@ async fn update_details(
         )
         .await?;
     local.name = entry.name.clone();
-    local.english_name = entry.english_name.clone();
-    local.japanese_name = entry.japanese_name.clone();
+    local.english_name = english_name;
+    local.japanese_name = japanese_name;
     local.flags = flags;
     local.anilist_id = entry.anilist_id;
     local.tmdb_id = entry.tmdb_id;
@@ -956,6 +972,8 @@ mod tests {
         anilist_id: Option<u32>,
         tmdb_id: Option<&'static str>,
         notes: Option<&'static str>,
+        english_name: Option<&'static str>,
+        japanese_name: Option<&'static str>,
         last_modified: &'static str,
         files: Vec<(&'static str, &'static [u8], &'static str)>,
     }
@@ -969,6 +987,8 @@ mod tests {
                 anilist_id: None,
                 tmdb_id: None,
                 notes: None,
+                english_name: None,
+                japanese_name: None,
                 last_modified,
                 files: Vec::new(),
             }
@@ -1002,6 +1022,7 @@ mod tests {
                     "flags": {"anime": entry.anime, "unverified": false, "external": false, "movie": false, "adult": false},
                     "last_modified": entry.last_modified, "anilist_id": entry.anilist_id, "tmdb_id": entry.tmdb_id,
                     "notes": entry.notes, "creator_id": 7,
+                    "english_name": entry.english_name, "japanese_name": entry.japanese_name,
                 })
             })
             .collect();
@@ -1264,6 +1285,66 @@ mod tests {
         assert_eq!(crate::store::read(&copy.path.join("old.srt.zst")).unwrap(), opening);
         assert_eq!(compress_copies(&test.database, &staging).await.unwrap(), (0, 0));
 
+        std::fs::remove_dir_all(&test.root).unwrap();
+    }
+
+    /// dung.live calls each entry that it made from a folder an anime, and has no English
+    /// name for it. An editor here puts a live action show in the Live Action tab and adds
+    /// names. The next passes keep that, and still take a name that the site gives.
+    #[tokio::test]
+    async fn the_copy_keeps_the_tab_and_the_names_that_are_given_here() {
+        let mut drama = FakeEntry::new(20, "Meng Qi Shi Shen", true, "2024-01-01T00:00:00Z");
+        drama.english_name = Some("");
+        drama.japanese_name = Some("Meng Qi Shi Shen");
+        let fake: Shared = Arc::new(Mutex::new(Fake {
+            entries: vec![drama],
+            calls: Vec::new(),
+        }));
+        let base = serve(fake.clone()).await;
+        let test = TestSite::new("sorted").await;
+        let mirror = mirror(&base, "zh");
+
+        sync_once(&test.site(), &mirror).await.unwrap();
+        let copy = test.entries().await.remove(0);
+        assert_eq!(copy.kind, Some(Kind::Anime), "the site says that it is an anime");
+        assert!(copy.flags.is_anime());
+        assert_eq!(copy.english_name, None, "an empty name is no name");
+
+        test.database
+            .execute(
+                "UPDATE directory_entry SET kind = 'drama', flags = flags & ~1,
+                        english_name = 'Cinderella Chef', other_names = '萌妻食神' WHERE id = ?",
+                [copy.id],
+            )
+            .await
+            .unwrap();
+        sync_once(&test.site(), &mirror).await.unwrap();
+        let copy = test.entries().await.remove(0);
+        assert_eq!(copy.kind_of(&test.config), Kind::Drama, "the tab of the editor stays");
+        assert!(!copy.flags.is_anime(), "the flag agrees with the tab");
+        assert_eq!(copy.english_name.as_deref(), Some("Cinderella Chef"));
+        assert_eq!(copy.other_names, ["萌妻食神"]);
+
+        {
+            let mut fake = fake.lock().unwrap();
+            let entry = &mut fake.entries[0];
+            entry.name = "Meng Qi Shi Shen 2".into();
+            entry.english_name = Some("Cinderella Chef 2");
+        }
+        sync_once(&test.site(), &mirror).await.unwrap();
+        let copy = test.entries().await.remove(0);
+        assert_eq!(copy.name, "Meng Qi Shi Shen 2");
+        assert_eq!(
+            copy.english_name.as_deref(),
+            Some("Cinderella Chef 2"),
+            "a name of the site wins"
+        );
+        assert_eq!(copy.kind, Some(Kind::Drama));
+        assert_eq!(
+            copy.other_names,
+            ["萌妻食神"],
+            "the copy does not write the other names"
+        );
         std::fs::remove_dir_all(&test.root).unwrap();
     }
 

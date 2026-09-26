@@ -347,6 +347,30 @@ pub struct DirectoryEntry {
     #[schema(example = "葬送のフリーレン")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    /// Other names of the entry: the title in romaji or in pinyin, the title in Chinese or
+    /// in Japanese, another English title. The search finds the entry by each of them.
+    #[schema(example = json!(["Sousou no Frieren", "葬送的芙莉莲"]))]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_names: Vec<String>,
+}
+
+/// Reads the other names of an entry from the text of the column `other_names`: one name
+/// on each line. A blank line and a name that is there already are not names.
+pub fn parse_other_names(text: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    // A browser sends the lines of a text area with "\r\n". A lone "\r" ends a line too.
+    for line in text.split(['\r', '\n']) {
+        let name = line.trim();
+        if !name.is_empty() && !names.iter().any(|known| known == name) {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+/// The text of the column `other_names` for these names. No names is NULL.
+pub fn join_other_names(names: &[String]) -> Option<String> {
+    (!names.is_empty()).then(|| names.join("\n"))
 }
 
 impl Table for DirectoryEntry {
@@ -367,6 +391,7 @@ impl Table for DirectoryEntry {
         "notes",
         "english_name",
         "japanese_name",
+        "other_names",
         "name",
     ];
 
@@ -374,6 +399,7 @@ impl Table for DirectoryEntry {
 
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         let path: String = row.get("path")?;
+        let other_names: Option<String> = row.get("other_names")?;
         Ok(Self {
             id: row.get("id")?,
             path: PathBuf::from(path),
@@ -390,6 +416,7 @@ impl Table for DirectoryEntry {
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
+            other_names: parse_other_names(other_names.as_deref().unwrap_or_default()),
         })
     }
 }
@@ -422,6 +449,8 @@ pub struct DirectoryEntryBackup {
     pub english_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_names: Vec<String>,
 }
 
 /// Data that is passed around from the server to the frontend JavaScript
@@ -447,6 +476,9 @@ pub struct DirectoryEntryData<'a> {
     pub english_name: &'a Option<String>,
     /// The Japanese name of the entry, i.e. with kanji and kana.
     pub japanese_name: &'a Option<String>,
+    /// The other names of the entry, for the search.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub other_names: &'a [String],
 }
 
 impl DirectoryEntry {
@@ -471,7 +503,27 @@ impl DirectoryEntry {
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
+            other_names: Default::default(),
         }
+    }
+
+    /// The other names as the edit form shows them: one on each line.
+    pub fn other_names_text(&self) -> String {
+        self.other_names.join("\n")
+    }
+
+    /// The names that the page of the entry shows under its name: the English name, then
+    /// the other names. A name that is the same as the name of the entry is not shown again.
+    pub fn also_known_as(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        let english = self.english_name.as_deref().into_iter();
+        for name in english.chain(self.other_names.iter().map(String::as_str)) {
+            let name = name.trim();
+            if !name.is_empty() && name != self.name && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
     }
 
     /// The ISO 639-1 code of the language of the entry. An entry with none is in the language of the site.
@@ -504,6 +556,7 @@ impl DirectoryEntry {
             bangumi_id: self.bangumi_id,
             english_name: &self.english_name,
             japanese_name: &self.japanese_name,
+            other_names: &self.other_names,
         }
     }
 
@@ -523,6 +576,7 @@ impl DirectoryEntry {
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
+            other_names: self.other_names,
         }
     }
 
@@ -576,6 +630,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,
+            other_names: value.other_names,
         }
     }
 }
@@ -1039,5 +1094,62 @@ mod tests {
         let mut book = DirectoryEntry::temporary("x".to_owned());
         book.book_id = Some("B0BPXSSWVF".to_owned());
         assert_eq!(book.kind_of(&config), Kind::Book);
+    }
+
+    /// Each text of up to 7 characters from a small alphabet: the names that are read from
+    /// it have no blank, no space at an end, no line break and no copy, and they are read
+    /// again the same from the text that is written for them.
+    #[test]
+    fn other_names_are_read_back_the_same_from_what_is_written() {
+        const ALPHABET: [char; 5] = ['a', 'b', ' ', '\n', '\r'];
+        let mut texts = vec![String::new()];
+        let mut checked = 0;
+        for _ in 0..7 {
+            let longer: Vec<String> = texts
+                .iter()
+                .flat_map(|text| ALPHABET.iter().map(move |c| format!("{text}{c}")))
+                .collect();
+            for text in &longer {
+                let names = parse_other_names(text);
+                for name in &names {
+                    assert!(
+                        !name.is_empty() && name.trim() == name && !name.contains(['\n', '\r']),
+                        "{text:?}"
+                    );
+                    assert_eq!(names.iter().filter(|n| *n == name).count(), 1, "{text:?}");
+                }
+                let written = join_other_names(&names);
+                assert_eq!(written.is_none(), names.is_empty(), "{text:?}");
+                assert_eq!(
+                    parse_other_names(written.as_deref().unwrap_or_default()),
+                    names,
+                    "{text:?}"
+                );
+                checked += 1;
+            }
+            texts = longer;
+        }
+        assert_eq!(checked, (1..=7).map(|n| 5_usize.pow(n)).sum::<usize>());
+    }
+
+    #[test]
+    fn the_page_shows_the_english_name_and_the_other_names_once() {
+        let mut entry = DirectoryEntry::temporary("[1巻] 転生したらスライムだった件 1".to_owned());
+        assert!(entry.also_known_as().is_empty());
+        entry.english_name = Some("That Time I Got Reincarnated as a Slime, Vol. 1".to_owned());
+        entry.other_names = parse_other_names(
+            "Tensei Shitara Slime Datta Ken 1\n[1巻] 転生したらスライムだった件 1\nThat Time I Got Reincarnated as a Slime, Vol. 1",
+        );
+        assert_eq!(
+            entry.also_known_as(),
+            [
+                "That Time I Got Reincarnated as a Slime, Vol. 1",
+                "Tensei Shitara Slime Datta Ken 1"
+            ]
+        );
+        assert_eq!(
+            entry.other_names_text(),
+            "Tensei Shitara Slime Datta Ken 1\n[1巻] 転生したらスライムだった件 1\nThat Time I Got Reincarnated as a Slime, Vol. 1"
+        );
     }
 }
