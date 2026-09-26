@@ -93,10 +93,14 @@ impl DatabaseBuilder {
     /// true for every connection.
     ///
     /// ```rust,no_run
+    /// # use jimaku::database::Database;
+    /// # async fn example() -> anyhow::Result<()> {
     /// let db = Database::file("app.db")
     ///     .with_init(|c| c.execute_batch("PRAGMA foreign_keys=1;"))
     ///     .open()
     ///     .await?;
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn with_init<F>(mut self, init: F) -> Self
     where
