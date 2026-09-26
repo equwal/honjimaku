@@ -8,6 +8,8 @@ rust-version = "1.92"
 
 [dev-dependencies]
 divan = "0.1.14"
+proptest = { version = "1", default-features = false, features = ["std"] }
+quick-xml = "0.41"
 
 [dependencies]
 anitomy = { git = "https://github.com/Rapptz/anitomy-rs/", version = "0.1.0" }

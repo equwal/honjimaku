@@ -7,6 +7,7 @@
 {%- else -%}
 <link rel="search" href="/opensearch/dramas.xml" type="application/opensearchdescription+xml" title="{{ crate::CONFIG.get().unwrap().site_name }} Dramas">
 {%- endif -%}
+<link rel="alternate" type="application/rss+xml" href="{{ feed_path }}" title="{{ feed_title }}">
 <meta property="og:url" content="{{ url }}">
 <meta property="og:title" content="{{ crate::CONFIG.get().unwrap().site_name }}: {% if crate::CONFIG.get().unwrap().book_site %}subtitles for audiobooks{% else %}{{ crate::CONFIG.get().unwrap().language_label() }} subtitles{% endif %}">
 {% endblock %}
@@ -173,6 +174,12 @@
   <h1>Drop ZIP to import</h1>
 </div>
 {% endif %}
+{% endblock %}
+
+{% block footer %}
+<div class="links">
+  <a href="{{ feed_path }}" type="application/rss+xml">RSS</a>
+</div>
 {% endblock %}
 
 {% block body_end %}

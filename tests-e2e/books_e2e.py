@@ -249,6 +249,41 @@ if pride:
     r = upload([('pride%d.srt' % random.randrange(10**6), book(400, 'It is a truth universally acknowledged.'), 'application/x-subrip')])
     check('English subtitles go into an English book', any('successful' in f.lower() for f in flashes(r.text)), flashes(r.text))
 
+# --- an RSS feed for each tab (each language, and each kind in it), beside the tab
+import email.utils
+import xml.etree.ElementTree as ET
+def feed(path):
+    r = s.get(B + path)
+    return r, (ET.fromstring(r.content) if r.status_code == 200 else None)
+def links(root):
+    return [i.findtext('link') for i in root.iter('item')] if root is not None else []
+r, en = feed('/feed.xml?lang=EN')
+check('the English feed is RSS', en is not None and en.tag == 'rss' and r.headers.get('content-type', '').startswith('application/rss+xml'), (r.status_code, r.headers.get('content-type')))
+check('the English feed names its language, its tab and itself',
+      en is not None and en.findtext('channel/title', '').endswith('Books in English') and en.findtext('channel/language') == 'en'
+      and en.findtext('channel/link') == B + '/?lang=en'
+      and [l.get('href') for l in en.iter('{http://www.w3.org/2005/Atom}link')] == [B + '/feed.xml?lang=en'])
+dates = [email.utils.parsedate_to_datetime(i.findtext('pubDate')) for i in en.iter('item')] if en is not None else []
+check('the English feed has the English books, the newest first',
+      bool(pride) and B + f'/entry/{pride}' in links(en) and B + f'/entry/{dune}' in links(en) and dates == sorted(dates, reverse=True), links(en)[:3])
+r, ja = feed('/feed.xml')
+check('the feed of the front page has the Japanese books, not the English ones', B + f'/entry/{bare}' in links(ja) and B + f'/entry/{pride}' not in links(ja), links(ja)[:3])
+check('an unknown language has no feed', s.get(B + '/feed.xml?lang=zz').status_code == 404)
+check('each tab names its feed for feed readers',
+      '<link rel="alternate" type="application/rss+xml" href="/feed.xml?lang=en"' in s.get(B + '/?lang=en').text
+      and '<link rel="alternate" type="application/rss+xml" href="/feed.xml"' in s.get(B + '/').text)
+import html
+r, en_anime = feed('/feed.xml?lang=en&kind=anime')
+alternate = re.search(r'<link rel="alternate" type="application/rss\+xml" href="([^"]*)"', s.get(B + '/?lang=en&kind=anime').text)
+check('the feed of a kind in a language links to its tab and to itself',
+      en_anime is not None and en_anime.findtext('channel/title', '').endswith('Anime in English')
+      and en_anime.findtext('channel/link') == B + '/?lang=en&kind=anime'
+      and [l.get('href') for l in en_anime.iter('{http://www.w3.org/2005/Atom}link')] == [B + '/feed.xml?lang=en&kind=anime']
+      and alternate is not None and html.unescape(alternate.group(1)) == '/feed.xml?lang=en&kind=anime', (r.status_code, alternate and alternate.group(1)))
+check('an unknown kind has no feed', s.get(B + '/feed.xml?kind=manga').status_code == 404)
+r = s.get(B + '/dramas/feed.xml', allow_redirects=False)
+check('/dramas/feed.xml goes to the feed of the live action shows', r.status_code in (301, 308) and r.headers.get('location') == '/feed.xml?kind=drama', (r.status_code, r.headers.get('location')))
+
 # --- the blue check mark: an editor says that a person has reviewed the subtitles
 import os, sqlite3
 db = os.environ.get('JIMAKU_DB')

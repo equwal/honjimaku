@@ -16,13 +16,14 @@ use axum::{
 };
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
 
-use crate::{AppState, models::DirectoryEntry};
+use crate::{AppState, Config, models::DirectoryEntry};
 
 mod admin;
 mod api;
 mod audit;
 mod auth;
 mod entry;
+mod feed;
 mod notification;
 mod opensearch;
 mod relations;
@@ -57,6 +58,10 @@ where
     /// True if the editor may import a ZIP here. On a site for books, an import makes a book,
     /// so only the page of the books has it.
     zip_import: bool,
+    /// The path of the RSS feed of the listing.
+    feed_path: String,
+    /// The title of the RSS feed of the listing.
+    feed_title: String,
 }
 
 struct Tab<'a> {
@@ -87,6 +92,99 @@ fn listing_href(config: &crate::Config, language: &str, kind: Kind) -> String {
     }
 }
 
+/// A listing of entries. Each listing is a tab of the site and has an RSS feed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Listing<'a> {
+    /// The listing at "/". On a site for books, it holds the entries of one kind in one language.
+    Main { language: &'a str, kind: Kind },
+    /// The listing at "/dramas", of live action shows. Only a site with two listings has it.
+    Dramas,
+}
+
+impl<'a> Listing<'a> {
+    /// The listing at "/" that the query asks for. Only a site for books reads the query.
+    /// `None` if the query names a language that is not an ISO 639-1 code, or an unknown kind.
+    fn main(config: &'a Config, query: &ListingQuery) -> Option<Self> {
+        if !config.book_site {
+            return Some(Self::Main {
+                language: config.default_language(),
+                kind: Kind::Book,
+            });
+        }
+        let language = match query.lang.as_deref() {
+            None => config.default_language(),
+            Some(raw) => crate::language::code(raw)?,
+        };
+        let kind = match query.kind.as_deref() {
+            None => Kind::Book,
+            Some(raw) => Kind::parse(raw)?,
+        };
+        Some(Self::Main { language, kind })
+    }
+
+    /// The ISO 639-1 code of the language of the listing.
+    fn language(self, config: &'a Config) -> &'a str {
+        match self {
+            Self::Main { language, .. } => language,
+            Self::Dramas => config.default_language(),
+        }
+    }
+
+    /// The kind of entry of the listing. Only a site for books uses it.
+    fn kind(self) -> Kind {
+        match self {
+            Self::Main { kind, .. } => kind,
+            Self::Dramas => Kind::Drama,
+        }
+    }
+
+    /// True if the listing shows the entry.
+    fn shows(self, config: &Config, entry: &DirectoryEntry) -> bool {
+        match self {
+            Self::Main { language, kind } if config.book_site => {
+                entry.language_code(config) == language && entry.kind_of(config) == kind
+            }
+            Self::Main { .. } => config.drama_site || entry.flags.is_anime(),
+            Self::Dramas => !entry.flags.is_anime(),
+        }
+    }
+
+    /// The name of the listing: "Anime", "Live Action", "Dramas" on a site for dramas,
+    /// or "Books in German" and "Anime in Japanese" on a site for books.
+    fn name(self, config: &Config) -> String {
+        match self {
+            Self::Main { language, kind } if config.book_site => {
+                format!("{} in {}", kind.label(), crate::language::name(language))
+            }
+            Self::Main { .. } if config.drama_site => String::from("Dramas"),
+            Self::Main { .. } => String::from("Anime"),
+            Self::Dramas => String::from("Live Action"),
+        }
+    }
+
+    /// The path of the page of the listing.
+    fn page(self, config: &Config) -> String {
+        match self {
+            Self::Main { language, kind } => listing_href(config, language, kind),
+            Self::Dramas => String::from("/dramas"),
+        }
+    }
+
+    /// The path of the RSS feed of the listing: the path of its page with "feed.xml" after the
+    /// first slash, so "/?lang=de" has "/feed.xml?lang=de".
+    fn feed_path(self, config: &Config) -> String {
+        match self {
+            Self::Main { .. } => format!("/feed.xml{}", self.page(config).trim_start_matches('/')),
+            Self::Dramas => String::from("/dramas/feed.xml"),
+        }
+    }
+
+    /// The title of the RSS feed of the listing: "Jimaku: Anime" or "本字幕: Books in German".
+    fn feed_title(self, config: &Config) -> String {
+        format!("{}: {}", config.site_name, self.name(config))
+    }
+}
+
 async fn index(
     State(state): State<AppState>,
     account: Option<Account>,
@@ -98,20 +196,10 @@ async fn index(
     let config = state.config();
     // A site for books has a tab for each language, and under it a tab for each kind of
     // entry. The books in the language of the site are at "/".
-    let language = match query.lang.as_deref().filter(|_| config.book_site) {
-        None => config.default_language(),
-        Some(raw) => match crate::language::code(raw) {
-            Some(code) => code,
-            None => return Redirect::to("/").into_response(),
-        },
+    let Some(listing) = Listing::main(config, &query) else {
+        return Redirect::to("/").into_response();
     };
-    let kind = match query.kind.as_deref().filter(|_| config.book_site) {
-        None => Kind::Book,
-        Some(raw) => match Kind::parse(raw) {
-            Some(kind) => kind,
-            None => return Redirect::to("/").into_response(),
-        },
-    };
+    let (language, kind) = (listing.language(config), listing.kind());
     let entries = state.directory_entries().await;
     let mut bypass_cache = account.is_some();
     let mut tabs = Vec::new();
@@ -176,13 +264,7 @@ async fn index(
     };
     let template = ListingTemplate {
         account,
-        entries: entries.iter().filter(|e| {
-            if book_site {
-                e.language_code(config) == language && e.kind_of(config) == kind
-            } else {
-                drama_site || e.flags.is_anime()
-            }
-        }),
+        entries: entries.iter().filter(|e| listing.shows(config, e)),
         flashes,
         url,
         anime: if book_site { kind != Kind::Drama } else { !drama_site },
@@ -193,6 +275,8 @@ async fn index(
         kinds,
         books: book_site && kind == Kind::Book,
         zip_import: editor && (!book_site || kind == Kind::Book),
+        feed_path: listing.feed_path(config),
+        feed_title: listing.feed_title(config),
     };
     cacher
         .cache_template(cache_key.unwrap_or("index"), template, encoding, bypass_cache)
@@ -222,22 +306,25 @@ async fn dramas(
         }
         return Redirect::permanent(&to).into_response();
     }
+    let config = state.config();
     let entries = state.directory_entries().await;
     let bypass_cache = account.is_some();
     let editor = account.flags().is_editor();
     let template = ListingTemplate {
         account,
-        entries: entries.iter().filter(|e| !e.flags.is_anime()),
+        entries: entries.iter().filter(|e| Listing::Dramas.shows(config, e)),
         flashes,
-        url: state.config().url_to("/dramas"),
+        url: config.url_to("/dramas"),
         anime: false,
         editor,
-        language: state.config().default_language(),
+        language: config.default_language(),
         tabs: Vec::new(),
         languages: Vec::new(),
         kinds: Vec::new(),
         books: false,
         zip_import: editor,
+        feed_path: Listing::Dramas.feed_path(config),
+        feed_title: Listing::Dramas.feed_title(config),
     };
     cacher
         .cache_template("dramas", template, encoding, bypass_cache)
@@ -355,6 +442,7 @@ pub fn all() -> Router<AppState> {
         .route("/anilist/{name}", get(show_anilist_page))
         .merge(auth::routes())
         .merge(entry::routes())
+        .merge(feed::routes())
         .merge(admin::routes())
         .merge(audit::routes())
         .merge(relations::routes())
