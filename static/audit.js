@@ -344,6 +344,16 @@ const auditLogTypes = Object.freeze({
         } else {
           return html('li', `Changed ${title} from `, html('span.before', before), ' to ', html('span.after', after));
         }
+      case 'other_names':
+        before = (before ?? []).join(' · ');
+        after = (after ?? []).join(' · ');
+        if(!before && after) {
+          return html('li', 'Set new other names ', html('span.after', after));
+        } else if (before && !after) {
+          return html('li', 'Removed the other names ', html('span.before', before));
+        } else {
+          return html('li', 'Changed other names from ', html('span.before', before), ' to ', html('span.after', after));
+        }
       case 'notes':
         if(before == null && after != null) {
           return html('li', 'Set the notes to ', html('code.after', html('pre', after)));

@@ -66,7 +66,9 @@ const parseEntryObjects = () => {
       if (obj[attr] === null) {
         continue;
       }
-      el.setAttribute(`data-${attr.replaceAll('_', '-')}`, obj[attr]);
+      // Keep a list (the other names) with one item on each line. A name can contain a comma.
+      const value = Array.isArray(obj[attr]) ? obj[attr].join('\n') : obj[attr];
+      el.setAttribute(`data-${attr.replaceAll('_', '-')}`, value);
     }
     delete el.dataset.extra;
   });
@@ -202,6 +204,11 @@ function __scoreByName(el, query) {
   let english = el.dataset.englishName;
   if (english !== null) {
     total = Math.max(total, __score(english, query));
+  }
+  for (const other of (el.dataset.otherNames ?? '').split('\n')) {
+    if (other) {
+      total = Math.max(total, __score(other, query));
+    }
   }
   return total;
 }

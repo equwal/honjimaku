@@ -261,6 +261,12 @@ pub struct DirectoryEntry {
     #[schema(example = "葬送のフリーレン")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    /// Other names of the entry, e.g. other romaji spellings or titles in other languages.
+    ///
+    /// The search also matches these names.
+    #[schema(example = json!(["Frieren", "葬送的芙莉莲"]))]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub other_names: Vec<String>,
 }
 
 impl Table for DirectoryEntry {
@@ -277,6 +283,7 @@ impl Table for DirectoryEntry {
         "notes",
         "english_name",
         "japanese_name",
+        "other_names",
         "name",
     ];
 
@@ -284,6 +291,7 @@ impl Table for DirectoryEntry {
 
     fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         let path: String = row.get("path")?;
+        let other_names: Option<String> = row.get("other_names")?;
         Ok(Self {
             id: row.get("id")?,
             path: PathBuf::from(path),
@@ -296,6 +304,7 @@ impl Table for DirectoryEntry {
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
+            other_names: crate::names::parse(other_names.as_deref().unwrap_or_default(), &[]),
         })
     }
 }
@@ -320,6 +329,8 @@ pub struct DirectoryEntryBackup {
     pub english_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub other_names: Vec<String>,
 }
 
 /// Data that is passed around from the server to the frontend JavaScript
@@ -341,6 +352,9 @@ pub struct DirectoryEntryData<'a> {
     pub english_name: &'a Option<String>,
     /// The Japanese name of the entry, i.e. with kanji and kana.
     pub japanese_name: &'a Option<String>,
+    /// Other names of the entry, for the search.
+    #[serde(skip_serializing_if = "<[String]>::is_empty")]
+    pub other_names: &'a [String],
 }
 
 impl DirectoryEntry {
@@ -361,6 +375,7 @@ impl DirectoryEntry {
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
+            other_names: Default::default(),
         }
     }
 
@@ -374,7 +389,13 @@ impl DirectoryEntry {
             tmdb_id: self.tmdb_id,
             english_name: &self.english_name,
             japanese_name: &self.japanese_name,
+            other_names: &self.other_names,
         }
+    }
+
+    /// The other names as the edit form shows them: one name on each line.
+    pub fn other_names_text(&self) -> String {
+        self.other_names.join("\n")
     }
 
     pub fn backup(self) -> DirectoryEntryBackup {
@@ -389,6 +410,7 @@ impl DirectoryEntry {
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
+            other_names: self.other_names,
         }
     }
 
@@ -437,6 +459,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,
+            other_names: value.other_names,
         }
     }
 }

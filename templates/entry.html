@@ -77,6 +77,9 @@
     {% endif -%}
   </div>
 </div>
+{% if !entry.other_names.is_empty() -%}
+<p class="other-names">{{ entry.other_names.join(" · ") }}</p>
+{% endif -%}
 <div id="relations"></div>
 {% match entry.notes -%}
   {% when Some with (notes) -%}
@@ -158,6 +161,9 @@
       <label for="entry-english-name">English Name</label>
       <input class="form-field" value="{{ entry.english_name|maybe_display }}"
              name="english_name" id="entry-english-name" autocomplete="off" type="text">
+      <label for="entry-other-names">Other Names (one on each line)</label>
+      <textarea class="form-field" name="other_names" id="entry-other-names" rows="3"
+                autocomplete="off">{{ entry.other_names_text() }}</textarea>
       <label for="entry-anilist-id">AniList ID or URL</label>
       <input class="form-field" value="{{ entry.anilist_id|maybe_display }}"
              pattern="^(?:[0-9]*|(?:https:\/\/anilist\.co\/anime\/(\d+)(?:\/.*)?))$"

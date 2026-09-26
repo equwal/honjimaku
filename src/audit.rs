@@ -284,6 +284,8 @@ pub struct EntrySnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub english_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_names: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anilist_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notes: Option<String>,

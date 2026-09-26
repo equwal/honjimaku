@@ -268,11 +268,12 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
     include_str!("../sql/3.sql"),
+    include_str!("../sql/4.sql"),
 ];
 
 fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
@@ -438,6 +439,29 @@ async fn run(command: jimaku::Command) -> anyhow::Result<()> {
             let total = fixtures.len();
             jimaku::fixture::commit_fixtures(&state, fixtures).await?;
             info!("committed {} fixtures to the database", total);
+            Ok(())
+        }
+        jimaku::Command::Names { path, dry_run } => {
+            let buffer = std::fs::read_to_string(path)?;
+            let records: Vec<jimaku::names::NameRecord> = serde_json::from_str(&buffer)?;
+            let summary = state
+                .database()
+                .call(move |conn| -> rusqlite::Result<jimaku::names::Summary> {
+                    let tx = conn.transaction()?;
+                    let summary = jimaku::names::import(&tx, &records)?;
+                    // A dry run drops the transaction, which rolls back the changes.
+                    if !dry_run {
+                        tx.commit()?;
+                    }
+                    Ok(summary)
+                })
+                .await?;
+            println!("{summary}");
+            if dry_run {
+                println!("Dry run: nothing was written to the database.");
+            } else if summary.entries_changed > 0 {
+                println!("The server caches the entries. Restart the server if it is running.");
+            }
             Ok(())
         }
         jimaku::Command::Move { path } => {

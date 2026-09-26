@@ -196,6 +196,9 @@ impl SearchQuery {
         if let Some(target) = entry.japanese_name.as_deref() {
             max = max.max(sublime_fuzzy::best_match(query, target));
         }
+        for target in &entry.other_names {
+            max = max.max(sublime_fuzzy::best_match(query, target));
+        }
         max
     }
 
@@ -445,4 +448,28 @@ pub async fn upload_files(
         return Err(ApiError::new("Upload failed"));
     }
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_finds_an_entry_by_an_other_name() {
+        let search = |query: &str| SearchQuery {
+            anime: true,
+            query: Some(query.to_owned()),
+            ..Default::default()
+        };
+        let mut entry = DirectoryEntry::temporary("Sousou no Frieren".to_owned());
+        entry.flags.set_anime(true);
+        assert_eq!(search("葬送的芙莉莲").apply(&entry), None);
+        assert_eq!(search("funeral").apply(&entry), None);
+
+        entry.other_names = vec!["葬送的芙莉莲".to_owned(), "Frieren at the Funeral".to_owned()];
+        assert!(search("葬送的芙莉莲").apply(&entry).is_some());
+        assert!(search("funeral").apply(&entry).is_some());
+        assert!(search("sousou").apply(&entry).is_some(), "the name still matches");
+        assert_eq!(search("dungeon meshi").apply(&entry), None);
+    }
 }

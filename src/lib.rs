@@ -20,6 +20,7 @@ pub mod key;
 pub mod kitsunekko;
 pub mod logging;
 pub mod models;
+pub mod names;
 pub mod notification;
 pub mod ratelimit;
 pub mod relations;

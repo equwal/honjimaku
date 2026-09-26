@@ -20,6 +20,7 @@ pub enum Command {
     Move { path: PathBuf },
     Backup { path: PathBuf },
     Upload { path: PathBuf },
+    Names { path: PathBuf, dry_run: bool },
 }
 
 macro_rules! quick_exit {
@@ -39,6 +40,9 @@ commands:
   move     <path>   Move directory entry paths to a new location
   backup   [path]   Backup subtitles and entry data to the given directory
   upload   <path>   Uploads a backup online
+  names    <path>   Adds English names and other names from a JSON file.
+                    Use --dry-run to print the changes without writing them.
+                    Stop the server first, or restart it after.
 
 options:
   -h, --help   Prints this help output
@@ -154,6 +158,29 @@ impl Command {
                     }
 
                     Self::Upload { path }
+                }
+                "names" => {
+                    let mut path = None;
+                    let mut dry_run = false;
+                    for arg in args {
+                        if arg == "--dry-run" {
+                            dry_run = true;
+                        } else if path.is_none() {
+                            path = Some(PathBuf::from(arg));
+                        } else {
+                            quick_exit!("too many parameters");
+                        }
+                    }
+
+                    let Some(path) = path else {
+                        quick_exit!("missing path parameter");
+                    };
+
+                    if path.is_dir() {
+                        quick_exit!("path must be a file not a directory");
+                    }
+
+                    Self::Names { path, dry_run }
                 }
                 "-h" | "--help" | "help" => {
                     println!("{HELP_OUTPUT}");

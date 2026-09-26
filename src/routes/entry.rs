@@ -8,7 +8,7 @@ use crate::models::{Account, AccountCheck, DirectoryEntry, EntryFlags, Report, R
 use crate::ratelimit::RateLimit;
 use crate::utils::{FRAGMENT, HtmlPage, is_over_length};
 use crate::{AppState, tmdb};
-use crate::{audit, filters};
+use crate::{audit, filters, names};
 use anyhow::{Context, bail};
 use askama::Template;
 use axum::body::{Body, Bytes};
@@ -390,6 +390,9 @@ struct EditDirectoryEntry {
     japanese_name: Option<String>,
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
     english_name: Option<String>,
+    /// One name on each line. A form without this field keeps the other names.
+    #[serde(default)]
+    other_names: Option<String>,
     #[serde(deserialize_with = "anilist_id_or_url")]
     anilist_id: Option<u32>,
     #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
@@ -434,6 +437,10 @@ impl EditDirectoryEntry {
 
         if is_over_length(&self.japanese_name, 1024) {
             errors.push("Japanese name cannot be more than 1024 bytes.");
+        }
+
+        if is_over_length(&self.other_names, 4096) {
+            errors.push("Other names cannot be more than 4096 bytes.");
         }
 
         if is_over_length(&self.notes, 2048) {
@@ -507,6 +514,10 @@ async fn edit_directory_entry(
     let mut audit_data = audit::EditEntry::default();
     let flags = payload.apply_flags(entry.flags);
     let mut changed_path: Option<PathBuf> = None;
+    let other_names = payload
+        .other_names
+        .as_deref()
+        .map(|text| names::parse(text, &[payload.name.as_str()]));
 
     if !flags.is_external() && (entry.anilist_id != payload.anilist_id || entry.tmdb_id != payload.tmdb_id) {
         // Change the internal path if the path bound data is changed...
@@ -548,6 +559,14 @@ async fn edit_directory_entry(
         audit_data.before.english_name = entry.english_name;
         audit_data.after.english_name = payload.english_name.clone();
         params.push(Box::new(payload.english_name));
+    }
+    if let Some(other_names) = other_names
+        && entry.other_names != other_names
+    {
+        columns.push("other_names");
+        params.push(Box::new(names::join(&other_names)));
+        audit_data.before.other_names = Some(entry.other_names);
+        audit_data.after.other_names = Some(other_names);
     }
     if entry.anilist_id != payload.anilist_id {
         columns.push("anilist_id");
