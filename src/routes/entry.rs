@@ -64,12 +64,17 @@ struct EntryTemplate {
     flashes: Flashes,
 }
 
+/// The date format of HTTP headers: "Sun, 03 Mar 2024 12:37:28 GMT".
+const HTTP_DATE: &[time::format_description::FormatItem<'static>] = time::macros::format_description!(
+    "[weekday repr:short], [day] [month repr:short] [year] [hour]:[minute]:[second] GMT"
+);
+
 pub(crate) fn get_file_entries(entry_id: i64, path: &std::path::Path) -> std::io::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
     for file in path.read_dir()? {
         let entry = file?;
-        let filename = entry.file_name();
-        let Some(filename) = filename.to_str() else {
+        let stored = entry.file_name();
+        let Some(stored) = stored.to_str() else {
             continue;
         };
 
@@ -80,6 +85,20 @@ pub(crate) fn get_file_entries(entry_id: i64, path: &std::path::Path) -> std::io
             OffsetDateTime::UNIX_EPOCH
         };
 
+        // A compressed subtitle shows its own name and its size before compression.
+        let (filename, size) = match crate::store::shown_name(stored) {
+            Some(name) => {
+                if path.join(name).exists() {
+                    continue; // the plain file of the same name is shown instead
+                }
+                let Ok(size) = crate::store::size(&entry.path()) else {
+                    continue;
+                };
+                (name, size)
+            }
+            None => (stored, metadata.len()),
+        };
+
         let url = format!(
             "/entry/{entry_id}/download/{}",
             percent_encode(filename.as_bytes(), FRAGMENT)
@@ -87,7 +106,7 @@ pub(crate) fn get_file_entries(entry_id: i64, path: &std::path::Path) -> std::io
         entries.push(FileEntry {
             url,
             name: filename.into(),
-            size: metadata.len(),
+            size,
             last_modified,
         });
     }
@@ -134,6 +153,34 @@ async fn download_entry(
     let Some(path) = validate_path(&base, filename.as_str()) else {
         return DownloadResponse::NotFound;
     };
+
+    // A text subtitle can be on the disk compressed: send it decompressed, with the headers
+    // that the plain file would get. The compression layer compresses it for the transfer.
+    if !path.exists()
+        && let (Some(folder), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str()))
+        && let Some(stored) = crate::store::find(folder, name).filter(|p| crate::store::is_compressed(p))
+    {
+        let name = name.to_owned();
+        let read = tokio::task::spawn_blocking(move || {
+            let modified = std::fs::metadata(&stored)?.modified()?;
+            Ok::<_, std::io::Error>((crate::store::read(&stored)?, modified))
+        })
+        .await;
+        return match read {
+            Ok(Ok((bytes, modified))) => {
+                let modified = OffsetDateTime::from(modified)
+                    .to_offset(time::UtcOffset::UTC)
+                    .format(HTTP_DATE)
+                    .unwrap_or_default();
+                let headers = [
+                    (CONTENT_TYPE, crate::store::content_type(&name).to_owned()),
+                    (axum::http::header::LAST_MODIFIED, modified),
+                ];
+                DownloadResponse::File((headers, bytes).into_response())
+            }
+            _ => DownloadResponse::NotFound,
+        };
+    }
 
     let mut service = ServeFile::new(path);
     let ready_service = ServiceExt::<Request>::ready(&mut service).await.unwrap(); // Infallible
@@ -1096,9 +1143,10 @@ async fn move_directory_entries(
     let mut failed = 0;
     audit_data.files.reserve(payload.files.len());
     for file in payload.files {
-        let from = entry.join(&file);
-        let to = path.join(&file);
-        let error = to.exists() || tokio::fs::rename(from, to).await.is_err();
+        // A compressed subtitle moves compressed.
+        let (from, to, name) = (entry.clone(), path.clone(), file.clone());
+        let moved = tokio::task::spawn_blocking(move || crate::store::rename(&from, &name, &to, &name)).await;
+        let error = !matches!(moved, Ok(Ok(())));
         audit_data.add_file(file, error);
         if error {
             failed += 1;
@@ -1202,7 +1250,7 @@ async fn bulk_delete_files(
         let total = payload.files.len();
         let description = crate::utils::join_iter("\n", payload.files.iter().map(|x| format!("- {x}")).take(25));
         for file in payload.files {
-            let path = entry.join(&file);
+            let path = crate::store::find(&entry, &file).unwrap_or_else(|| entry.join(&file));
             let result = if account.flags.is_admin() {
                 tokio::fs::remove_file(path).await
             } else {
@@ -1352,9 +1400,10 @@ async fn bulk_rename_files(
     let mut success = 0;
     let mut failed = 0;
     for file in files {
-        let from = entry.join(&file.from);
-        let to = entry.join(&file.to);
-        let errored = to.exists() || tokio::fs::rename(from, to).await.is_err();
+        // A compressed subtitle keeps its compression when it keeps a subtitle name.
+        let (folder, from, to) = (entry.clone(), file.from.clone(), file.to.clone());
+        let renamed = tokio::task::spawn_blocking(move || crate::store::rename(&folder, &from, &folder, &to)).await;
+        let errored = !matches!(renamed, Ok(Ok(())));
         data.add_file(file.from, file.to, errored);
         if errored {
             failed += 1;
@@ -1522,9 +1571,11 @@ async fn verify_file(
         .extension()
         .and_then(|ext| ext.to_str())
         .map(str::to_ascii_lowercase);
+    // The file can be there compressed, as `name.zst`.
+    let taken = crate::store::exists(entry_path, &file_name.to_string_lossy());
     let path = entry_path.join(file_name);
     if let Some(kind) = extension.as_deref().and_then(bookcheck::Kind::from_extension) {
-        if path.exists() {
+        if taken {
             bail!("a file with this name is already there")
         }
         let staged = stage(staging, field, kind.max_bytes()).await?;
@@ -1538,7 +1589,7 @@ async fn verify_file(
     }
     match extension.as_deref() {
         Some(ext @ ("srt" | "vtt" | "ass" | "ssa" | "zip" | "sub" | "sup" | "idx" | "7z")) => {
-            if path.exists() {
+            if taken {
                 bail!("a file with this name is already there")
             }
             let bytes = read_capped(field, crate::MAX_UPLOAD_SIZE).await?;
@@ -1762,8 +1813,8 @@ async fn bulk_download(
     const MAX_BULK_BYTES: u64 = 64 * 1024 * 1024;
     let mut total = 0;
     for file in &payload.files {
-        if let Ok(metadata) = tokio::fs::metadata(entry.path.join(file)).await {
-            total += metadata.len();
+        if let Some(size) = crate::store::find(&entry.path, file).and_then(|path| crate::store::size(&path).ok()) {
+            total += size;
         }
     }
     if total > MAX_BULK_BYTES {
@@ -1778,8 +1829,8 @@ async fn bulk_download(
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
 
         for file in payload.files {
-            let path = entry.path.join(&file);
-            let Ok(contents) = std::fs::read(&path) else {
+            let Some(Ok(contents)) = crate::store::find(&entry.path, &file).map(|path| crate::store::read(&path))
+            else {
                 continue;
             };
             zip.start_file(file, options)?;
@@ -2231,5 +2282,38 @@ mod tests {
         for (anilist, tmdb) in [(false, false), (true, false), (false, true), (true, true)] {
             assert_eq!(missing_show_page(Kind::Book, anilist, tmdb), None);
         }
+    }
+
+    #[test]
+    fn a_compressed_subtitle_is_listed_under_its_own_name_and_size() {
+        let root = std::env::temp_dir().join(format!("honjimaku-listing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (entry, staging) = (root.join("entry"), root.join("staging"));
+        std::fs::create_dir_all(&entry).unwrap();
+        let text = "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,吾輩は猫である\n"
+            .repeat(400)
+            .into_bytes();
+        let epoch = std::time::SystemTime::UNIX_EPOCH;
+        crate::store::put(&entry, "a.ass", &text, epoch, &staging).unwrap();
+        std::fs::write(entry.join("b.7z"), b"archive").unwrap();
+        // The same name plain and compressed: the plain file is shown, and only once.
+        crate::store::put(&entry, "c.srt", &text, epoch, &staging).unwrap();
+        std::fs::write(entry.join("c.srt"), b"plain").unwrap();
+        assert!(entry.join("a.ass.zst").is_file() && entry.join("c.srt.zst").is_file());
+
+        let files = get_file_entries(7, &entry).unwrap();
+        let listed: Vec<_> = files
+            .iter()
+            .map(|f| (f.name.as_str(), f.size, f.url.as_str()))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("a.ass", text.len() as u64, "/entry/7/download/a.ass"),
+                ("b.7z", 7, "/entry/7/download/b.7z"),
+                ("c.srt", 5, "/entry/7/download/c.srt"),
+            ]
+        );
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

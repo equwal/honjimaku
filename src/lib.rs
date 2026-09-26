@@ -31,6 +31,7 @@ pub mod ratelimit;
 pub mod relations;
 pub mod routes;
 mod state;
+pub mod store;
 pub mod subcheck;
 pub mod sync;
 pub mod tmdb;

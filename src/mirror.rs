@@ -638,23 +638,31 @@ async fn copy_files(
         .await
         .with_context(|| format!("could not make the folder {}", copy.path.display()))?;
     tokio::fs::create_dir_all(staging).await?;
-    let mut wanted = Vec::new();
-    for file in files {
-        if !is_safe_file_name(&file.name) {
-            warn!(
-                site = host,
-                entry = entry.id,
-                name = file.name,
-                "a file with such a name is not copied"
-            );
-            continue;
-        }
-        let here = tokio::fs::metadata(copy.path.join(&file.name)).await;
-        if here.is_ok_and(|metadata| metadata.len() == file.size) {
-            continue;
-        }
-        wanted.push(file);
-    }
+    let mut files: Vec<RemoteFile> = files
+        .into_iter()
+        .filter(|file| {
+            let safe = is_safe_file_name(&file.name);
+            if !safe {
+                warn!(
+                    site = host,
+                    entry = entry.id,
+                    name = file.name,
+                    "a file with such a name is not copied"
+                );
+            }
+            safe
+        })
+        .collect();
+    // A file that is here with the same size (before compression) is not copied again.
+    let folder = copy.path.clone();
+    let wanted = tokio::task::spawn_blocking(move || {
+        files.retain(|file| {
+            let here = crate::store::find(&folder, &file.name).and_then(|path| crate::store::size(&path).ok());
+            here != Some(file.size)
+        });
+        files
+    })
+    .await?;
 
     let mut set = JoinSet::new();
     let mut wanted = wanted.into_iter().enumerate();
@@ -672,7 +680,14 @@ async fn copy_files(
                 percent_encode(file.name.as_bytes(), FRAGMENT)
             ));
             let part = staging.join(format!("{}-{index}.part", copy.entry_id));
-            set.spawn(download(site.client.clone(), url, file, copy.path.clone(), part));
+            set.spawn(download(
+                site.client.clone(),
+                url,
+                file,
+                copy.path.clone(),
+                part,
+                staging.to_path_buf(),
+            ));
         }
         match set.join_next().await {
             Some(result) => {
@@ -700,13 +715,14 @@ async fn copy_files(
 }
 
 /// Copies one file: to `part` first, then into the folder of the entry when it is whole.
-/// A file that is half here is never listed.
+/// A file that is half here is never listed. A text subtitle is kept compressed (see `store`).
 async fn download(
     client: reqwest::Client,
     url: String,
     file: RemoteFile,
     folder: PathBuf,
     part: PathBuf,
+    staging: PathBuf,
 ) -> anyhow::Result<()> {
     let response = client
         .get(&url)
@@ -733,14 +749,64 @@ async fn download(
         bail!("{}: got {written} bytes, the site says {}", file.name, file.size);
     }
     // The date of the file here is the date of the file there, as the listing shows it.
+    let modified = file.last_modified.into();
+    if crate::store::is_compressible(&file.name) {
+        let stored = tokio::task::spawn_blocking(move || {
+            let data = std::fs::read(&part)?;
+            let _ = std::fs::remove_file(&part);
+            crate::store::put(&folder, &file.name, &data, modified, &staging)
+        })
+        .await?;
+        stored.context("could not keep a subtitle")?;
+        return Ok(());
+    }
     std::fs::File::options()
         .write(true)
         .open(&part)?
-        .set_modified(file.last_modified.into())?;
+        .set_modified(modified)?;
     tokio::fs::rename(&part, folder.join(&file.name))
         .await
         .with_context(|| format!("could not move {} into {}", file.name, folder.display()))?;
     Ok(())
+}
+
+/// Compresses the text subtitles that the copies of the other sites hold as plain files.
+/// The files that the copy wrote before the store compressed them become smaller. Returns
+/// how many files were compressed and the bytes saved.
+pub async fn compress_copies(database: &Database, staging: &Path) -> anyhow::Result<(usize, u64)> {
+    let folders: Vec<String> = database
+        .call(|conn| -> rusqlite::Result<Vec<String>> {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT directory_entry.path FROM mirror
+                 INNER JOIN directory_entry ON directory_entry.id = mirror.entry_id",
+            )?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.collect()
+        })
+        .await?;
+    let (mut files, mut saved) = (0, 0);
+    for folder in folders {
+        let staging = staging.to_path_buf();
+        let result =
+            tokio::task::spawn_blocking(move || crate::store::compress_folder(Path::new(&folder), &staging)).await?;
+        match result {
+            Ok((count, bytes)) => {
+                files += count;
+                saved += bytes;
+            }
+            Err(e) => warn!(error = %e, "could not compress the subtitles of a copy"),
+        }
+    }
+    Ok((files, saved))
+}
+
+/// Runs `compress_copies` once, when the server starts, next to the copy.
+pub async fn compress_copies_at_start(state: AppState) {
+    let staging = state.config().subtitle_path.join(".mirror");
+    match compress_copies(state.database(), &staging).await {
+        Ok((files, saved)) => info!(files, saved_bytes = saved, "compressed the subtitles of the copies"),
+        Err(e) => warn!(error = %e, "could not compress the subtitles of the copies"),
+    }
 }
 
 /// Copies the site when the server starts, then once an hour.
@@ -1048,9 +1114,17 @@ mod tests {
         let mut frieren = FakeEntry::new(10, "Sousou no Frieren", true, "2025-02-05T22:26:56.816055878Z");
         frieren.anilist_id = Some(154587);
         frieren.notes = Some("The site says so");
+        // A subtitle large enough to compress, like the typesetting of an opening.
+        let opening: &'static [u8] = Box::leak(
+            "Dialogue: 0,0:00:01.00,0:00:02.00,OP,,0,0,0,,{\\pos(640,360)\\fad(200,200)}葬送のフリーレン\n"
+                .repeat(600)
+                .into_bytes()
+                .into_boxed_slice(),
+        );
         frieren.files = vec![
             ("ep01.srt", b"first", "2025-02-01T00:00:00Z"),
             ("ep 02 [JPJ].srt", b"second!", "2025-02-05T22:26:56Z"),
+            ("op.ass", opening, "2025-02-01T00:00:00Z"),
         ];
         let mut alice = FakeEntry::new(11, "Alice in Borderland", false, "2024-01-01T00:00:00Z");
         alice.tmdb_id = Some("tv:110316");
@@ -1088,7 +1162,7 @@ mod tests {
                 entries: 3,
                 made: 2,
                 copied: 3,
-                files: 3,
+                files: 4,
                 failed: 0,
                 disk_full: false,
             }
@@ -1113,6 +1187,18 @@ mod tests {
             .unwrap()
             .into();
         assert_eq!(modified.month() as u8, 2, "the file has the date of the site");
+        // The large subtitle is kept compressed, and it gives back the bytes of the site.
+        assert!(copy.path.join("op.ass.zst").is_file() && !copy.path.join("op.ass").exists());
+        let kept = crate::store::find(&copy.path, "op.ass").unwrap();
+        assert!(std::fs::metadata(&kept).unwrap().len() * 5 < opening.len() as u64);
+        assert_eq!(crate::store::read(&kept).unwrap(), opening);
+        assert_eq!(crate::store::size(&kept).unwrap(), opening.len() as u64);
+        let modified: OffsetDateTime = std::fs::metadata(&kept).unwrap().modified().unwrap().into();
+        assert_eq!(
+            modified.month() as u8,
+            2,
+            "the compressed file has the date of the site too"
+        );
         assert_eq!(entries[1].kind_of(&test.config), Kind::Book, "the book is left alone");
         let alice = entries.iter().find(|e| e.tmdb_id.is_some()).unwrap();
         assert_eq!(alice.kind, Some(Kind::Drama));
@@ -1160,6 +1246,23 @@ mod tests {
         assert_eq!(copy.name, "Sousou no Frieren (renamed)");
         assert_eq!(std::fs::read(copy.path.join("ep03.srt")).unwrap(), b"third");
         assert_eq!(copy.last_updated_at.month() as u8, 3);
+
+        // A subtitle that an older copy kept plain is compressed at the next start.
+        std::fs::write(copy.path.join("old.srt"), opening).unwrap();
+        std::fs::write(copy.path.join("pack.7z"), opening).unwrap();
+        // The book is not the copy of a site: its files stay as they are.
+        let book = test.config.subtitle_path.join("a book");
+        std::fs::create_dir_all(&book).unwrap();
+        std::fs::write(book.join("book.srt"), opening).unwrap();
+        let staging = test.config.subtitle_path.join(".mirror");
+        let (files, saved) = compress_copies(&test.database, &staging).await.unwrap();
+        assert_eq!(files, 1, "only the text subtitle of the copy");
+        assert!(saved > opening.len() as u64 / 2, "{saved}");
+        assert!(copy.path.join("old.srt.zst").is_file() && !copy.path.join("old.srt").exists());
+        assert!(copy.path.join("pack.7z").is_file());
+        assert!(book.join("book.srt").is_file() && !book.join("book.srt.zst").exists());
+        assert_eq!(crate::store::read(&copy.path.join("old.srt.zst")).unwrap(), opening);
+        assert_eq!(compress_copies(&test.database, &staging).await.unwrap(), (0, 0));
 
         std::fs::remove_dir_all(&test.root).unwrap();
     }

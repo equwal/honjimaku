@@ -123,6 +123,9 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     for mirror in state.config().mirrors.clone() {
         tokio::spawn(jimaku::mirror::mirror_loop(state.clone(), mirror));
     }
+    if !state.config().mirrors.is_empty() {
+        tokio::spawn(jimaku::mirror::compress_copies_at_start(state.clone()));
+    }
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
         loop {
@@ -338,12 +341,14 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
             .create()?;
 
         for dir_entry in iter.filter_map(|e| e.ok()) {
-            let mut file = std::fs::File::open(dir_entry.path())
+            // A compressed subtitle goes into the backup decompressed, with its own name.
+            let mut file = jimaku::store::open(&dir_entry.path())
                 .with_context(|| format!("could not open file {}", dir_entry.path().display()))?;
             let file_name = dir_entry.file_name();
             let name = file_name
                 .to_str()
                 .with_context(|| format!("Invalid UTF-8 filename for {}", dir_entry.path().display()))?;
+            let name = jimaku::store::shown_name(name).unwrap_or(name);
             let name = {
                 let mut buf = directory_name.clone();
                 buf.push_str(name);
