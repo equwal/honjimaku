@@ -353,11 +353,11 @@ if verified:
         check('DB: book_id is unique', con.execute("SELECT count(*) FROM sqlite_master WHERE type='index' AND name='directory_entry_book_id_idx'").fetchone()[0] == 1)
         check('DB: older folders got their ASIN from the path', con.execute("SELECT count(*) FROM directory_entry WHERE path LIKE '%[B0________]' AND book_id IS NULL AND substr(path,-11,10) IN (SELECT substr(path,-11,10) FROM directory_entry GROUP BY 1 HAVING count(*)=1)").fetchone()[0] == 0)
 
-# the site speaks of books only
+# the site has a Live Action tab next to the books, and does not say Jimaku
 home = s.get(B + '/').text
-check('no "Live Action" tab, no "Jimaku"', 'Live Action' not in home and 'Jimaku' not in home)
+check('a "Live Action" tab, no "Jimaku"', re.search(r'<a [^>]*href="[^"]*kind=drama"[^>]*>Live Action</a>', home) is not None and 'Jimaku' not in home)
 r = s.get(B + '/dramas', allow_redirects=False)
-check('/dramas goes to the front page', r.status_code in (301, 308) and r.headers.get('location') == '/')
+check('/dramas goes to the Live Action tab', r.status_code in (301, 308) and r.headers.get('location') == '/?kind=drama', (r.status_code, r.headers.get('location')))
 check('the manifest is named after the site', 'Jimaku' not in s.get(B + '/site.webmanifest').text)
 check('the API docs are named after the site', 'Jimaku' not in s.get(B + '/api/docs').text and 'Jimaku' not in s.get(B + '/api/openapi.json').text)
 
