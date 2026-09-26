@@ -1124,6 +1124,15 @@ mod tests {
             let path = self.config.subtitle_path.join(folder).to_str().unwrap().to_owned();
             self.database.execute(sql, [path]).await.unwrap();
         }
+
+        /// Closes the database, then removes the folder of the test. Windows does not
+        /// remove a file that is open, and the workers of `Database` keep main.db open
+        /// until the drop of `Database` stops them.
+        fn remove(self) {
+            let root = self.root.clone();
+            drop(self);
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     fn calls(fake: &Shared) -> Vec<String> {
@@ -1285,7 +1294,7 @@ mod tests {
         assert_eq!(crate::store::read(&copy.path.join("old.srt.zst")).unwrap(), opening);
         assert_eq!(compress_copies(&test.database, &staging).await.unwrap(), (0, 0));
 
-        std::fs::remove_dir_all(&test.root).unwrap();
+        test.remove();
     }
 
     /// dung.live calls each entry that it made from a folder an anime, and has no English
@@ -1345,7 +1354,7 @@ mod tests {
             ["萌妻食神"],
             "the copy does not write the other names"
         );
-        std::fs::remove_dir_all(&test.root).unwrap();
+        test.remove();
     }
 
     #[tokio::test]
@@ -1377,7 +1386,7 @@ mod tests {
         );
         assert_eq!(chinese.anilist_id, Some(19), "one AniList ID for each language");
         assert!(chinese.path.is_dir());
-        std::fs::remove_dir_all(&test.root).unwrap();
+        test.remove();
     }
 
     #[tokio::test]
@@ -1387,6 +1396,6 @@ mod tests {
         let result = sync_once(&test.site(), &mirror("http://127.0.0.1:9", "ja")).await;
         assert!(result.is_err());
         assert!(test.entries().await.is_empty());
-        std::fs::remove_dir_all(&test.root).unwrap();
+        test.remove();
     }
 }
