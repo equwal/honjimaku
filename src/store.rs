@@ -25,6 +25,15 @@ pub const SUFFIX: &str = ".zst";
 /// smaller at 25 MiB/s. Level 19 makes them 9.5 and 3.2 times smaller at 2 MiB/s.
 const LEVEL: i32 = 9;
 
+/// The longest file name that a Linux file system takes, in bytes. A Japanese character is 3
+/// bytes, and some names of jimaku.cc are near the limit: `.zst` does not fit after them.
+const NAME_MAX: usize = 255;
+
+/// True if `name.zst` is a name that the file system takes.
+fn fits_compressed(name: &str) -> bool {
+    name.len() + SUFFIX.len() <= NAME_MAX
+}
+
 /// True for a file that is worth compressing: a text subtitle.
 pub fn is_compressible(name: &str) -> bool {
     let extension = name
@@ -123,7 +132,11 @@ fn compress(data: &[u8]) -> io::Result<Option<Vec<u8>>> {
 /// place, so a reader never sees half a file. The file gets the date `modified`. The other
 /// form of the same name (plain or compressed) is removed. Returns the bytes on the disk.
 pub fn put(folder: &Path, name: &str, data: &[u8], modified: SystemTime, staging: &Path) -> io::Result<u64> {
-    let packed = if is_compressible(name) { compress(data)? } else { None };
+    let packed = if is_compressible(name) && fits_compressed(name) {
+        compress(data)?
+    } else {
+        None
+    };
     let (target, other, bytes) = match &packed {
         Some(packed) => (compressed_path(folder, name), folder.join(name), packed.as_slice()),
         None => (folder.join(name), compressed_path(folder, name), data),
@@ -154,7 +167,7 @@ pub fn compress_in_place(path: &Path, staging: &Path) -> io::Result<u64> {
     let (Some(folder), Some(name)) = (path.parent(), path.file_name().and_then(|name| name.to_str())) else {
         return Ok(0);
     };
-    if !is_compressible(name) {
+    if !is_compressible(name) || !fits_compressed(name) {
         return Ok(0);
     }
     let data = fs::read(path)?;
@@ -164,7 +177,7 @@ pub fn compress_in_place(path: &Path, staging: &Path) -> io::Result<u64> {
 }
 
 /// Compresses each plain text subtitle in `folder`. Returns how many files were compressed
-/// and the bytes saved.
+/// and the bytes saved. A file that cannot be compressed stays as it is, and the others go on.
 pub fn compress_folder(folder: &Path, staging: &Path) -> io::Result<(usize, u64)> {
     let mut files = 0;
     let mut saved = 0;
@@ -176,7 +189,10 @@ pub fn compress_folder(folder: &Path, staging: &Path) -> io::Result<(usize, u64)
                 Ok(bytes) => bytes,
                 // The copy or an editor moved the file away in the meantime.
                 Err(e) if e.kind() == io::ErrorKind::NotFound => 0,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    tracing::warn!(file = %path.display(), error = %e, "could not compress a subtitle");
+                    0
+                }
             };
             if bytes > 0 {
                 files += 1;
@@ -188,7 +204,8 @@ pub fn compress_folder(folder: &Path, staging: &Path) -> io::Result<(usize, u64)
 }
 
 /// Moves the file `from` in `from_folder` to `to` in `to_folder`. A compressed subtitle stays
-/// compressed. If it gets a name that is not a text subtitle, it is decompressed.
+/// compressed. If it gets a name that is not a text subtitle, or a name too long for `.zst`,
+/// it is decompressed.
 pub fn rename(from_folder: &Path, from: &str, to_folder: &Path, to: &str) -> io::Result<()> {
     if exists(to_folder, to) {
         return Err(io::Error::new(
@@ -200,7 +217,7 @@ pub fn rename(from_folder: &Path, from: &str, to_folder: &Path, to: &str) -> io:
     if !is_compressed(&source) {
         return fs::rename(source, to_folder.join(to));
     }
-    if is_compressible(to) {
+    if is_compressible(to) && fits_compressed(to) {
         return fs::rename(source, compressed_path(to_folder, to));
     }
     let data = read(&source)?;
@@ -394,6 +411,30 @@ mod tests {
         rename(&entry, "c.srt", &other, "c.srt").unwrap();
         assert!(other.join("c.srt.zst").is_file());
         assert_eq!(read(&find(&other, "c.srt").unwrap()).unwrap(), data);
+    }
+
+    #[test]
+    fn a_name_too_long_for_the_suffix_stays_plain() {
+        let folder = Folder::new("long");
+        let entry = folder.entry();
+        // A Japanese character is 3 bytes: 83 of them and ".srt" make 253 bytes, so the
+        // name fits and the name with ".zst" does not.
+        let long = format!("{}.srt", "猫".repeat(83));
+        assert_eq!(long.len(), 253);
+        let data = subtitle(300);
+        put(&entry, &long, &data, SystemTime::UNIX_EPOCH, &folder.staging()).unwrap();
+        assert_eq!(folder.names(), std::slice::from_ref(&long));
+        assert_eq!(read(&find(&entry, &long).unwrap()).unwrap(), data);
+
+        // The folder is compressed around it, and with no error.
+        fs::write(entry.join("short.srt"), &data).unwrap();
+        assert_eq!(compress_folder(&entry, &folder.staging()).unwrap().0, 1);
+        assert!(entry.join(&long).is_file() && entry.join("short.srt.zst").is_file());
+
+        // A compressed subtitle that gets such a name is decompressed.
+        fs::remove_file(entry.join(&long)).unwrap();
+        rename(&entry, "short.srt", &entry, &long).unwrap();
+        assert_eq!(fs::read(entry.join(&long)).unwrap(), data);
     }
 
     #[test]
