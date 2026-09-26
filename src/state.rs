@@ -377,10 +377,14 @@ impl AppState {
             .ok()
     }
 
-    /// Gets the directory entry's path by its AniList ID.
-    pub async fn get_anilist_directory_entry_path(&self, id: u32) -> Option<PathBuf> {
+    /// Gets the path of the entry with this AniList ID in this language.
+    ///
+    /// One show can have an entry in each language, so the language is necessary.
+    pub async fn get_anilist_directory_entry_path(&self, id: u32, language: &str) -> Option<PathBuf> {
         if let Some(guard) = self.cached_directories().get().await {
-            let found = guard.iter().find(|x| x.anilist_id == Some(id));
+            let found = guard
+                .iter()
+                .find(|x| x.anilist_id == Some(id) && x.language == language);
             // Cache hit, return a copy
             if let Some(hit) = found {
                 return Some(hit.path.clone());
@@ -388,18 +392,24 @@ impl AppState {
         }
 
         self.database()
-            .get_row("SELECT path FROM directory_entry WHERE anilist_id = ?", [id], |row| {
-                let str: String = row.get("path")?;
-                Ok(PathBuf::from(str))
-            })
+            .get_row(
+                "SELECT path FROM directory_entry WHERE anilist_id = ? AND language = ?",
+                (id, language.to_owned()),
+                |row| {
+                    let str: String = row.get("path")?;
+                    Ok(PathBuf::from(str))
+                },
+            )
             .await
             .ok()
     }
 
-    /// Gets the directory entry's path by its TMDB ID.
-    pub async fn get_tmdb_directory_entry_path(&self, id: crate::tmdb::Id) -> Option<PathBuf> {
+    /// Gets the path of the entry with this TMDB ID in this language.
+    ///
+    /// One show can have an entry in each language, so the language is necessary.
+    pub async fn get_tmdb_directory_entry_path(&self, id: crate::tmdb::Id, language: &str) -> Option<PathBuf> {
         if let Some(guard) = self.cached_directories().get().await {
-            let found = guard.iter().find(|x| x.tmdb_id == Some(id));
+            let found = guard.iter().find(|x| x.tmdb_id == Some(id) && x.language == language);
             // Cache hit, return a copy
             if let Some(hit) = found {
                 return Some(hit.path.clone());
@@ -407,10 +417,14 @@ impl AppState {
         }
 
         self.database()
-            .get_row("SELECT path FROM directory_entry WHERE tmdb_id = ?", [id], |row| {
-                let str: String = row.get("path")?;
-                Ok(PathBuf::from(str))
-            })
+            .get_row(
+                "SELECT path FROM directory_entry WHERE tmdb_id = ? AND language = ?",
+                (id, language.to_owned()),
+                |row| {
+                    let str: String = row.get("path")?;
+                    Ok(PathBuf::from(str))
+                },
+            )
             .await
             .ok()
     }

@@ -261,6 +261,9 @@ pub struct DirectoryEntry {
     #[schema(example = "葬送のフリーレン")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    /// The language of the subtitles of the entry, as an ISO 639-1 code.
+    #[schema(example = "ja")]
+    pub language: String,
 }
 
 impl Table for DirectoryEntry {
@@ -278,6 +281,7 @@ impl Table for DirectoryEntry {
         "english_name",
         "japanese_name",
         "name",
+        "language",
     ];
 
     type Id = i64;
@@ -296,8 +300,13 @@ impl Table for DirectoryEntry {
             notes: row.get("notes")?,
             english_name: row.get("english_name")?,
             japanese_name: row.get("japanese_name")?,
+            language: row.get("language")?,
         })
     }
+}
+
+fn default_language() -> String {
+    crate::language::DEFAULT.to_owned()
 }
 
 /// A specific model used for backup purposes with different (de)serialization requirements.
@@ -320,6 +329,9 @@ pub struct DirectoryEntryBackup {
     pub english_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub japanese_name: Option<String>,
+    /// A backup from before the languages has no language: its entries are Japanese.
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 /// Data that is passed around from the server to the frontend JavaScript
@@ -341,6 +353,14 @@ pub struct DirectoryEntryData<'a> {
     pub english_name: &'a Option<String>,
     /// The Japanese name of the entry, i.e. with kanji and kana.
     pub japanese_name: &'a Option<String>,
+    /// The language of the subtitles, as an ISO 639-1 code. The default language is left
+    /// out, so the listing of the Japanese entries does not get larger.
+    #[serde(skip_serializing_if = "is_default_language")]
+    pub language: &'a str,
+}
+
+fn is_default_language(code: &&str) -> bool {
+    *code == crate::language::DEFAULT
 }
 
 impl DirectoryEntry {
@@ -361,6 +381,7 @@ impl DirectoryEntry {
             notes: Default::default(),
             english_name: Default::default(),
             japanese_name: Default::default(),
+            language: default_language(),
         }
     }
 
@@ -374,6 +395,7 @@ impl DirectoryEntry {
             tmdb_id: self.tmdb_id,
             english_name: &self.english_name,
             japanese_name: &self.japanese_name,
+            language: &self.language,
         }
     }
 
@@ -389,12 +411,13 @@ impl DirectoryEntry {
             notes: self.notes,
             english_name: self.english_name,
             japanese_name: self.japanese_name,
+            language: self.language,
         }
     }
 
     /// Returns an appropriate description for the og:description meta tag
     pub fn description(&self) -> String {
-        let mut base = String::from("Download Japanese subtitles for ");
+        let mut base = format!("Download {} subtitles for ", crate::language::name(&self.language));
         base.push_str(&self.name);
         base.push_str(". ");
         if let Some(english) = self.english_name.as_deref() {
@@ -437,6 +460,7 @@ impl From<DirectoryEntryBackup> for DirectoryEntry {
             notes: value.notes,
             english_name: value.english_name,
             japanese_name: value.japanese_name,
+            language: value.language,
         }
     }
 }
@@ -820,5 +844,24 @@ impl Report {
             reason,
             payload,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_page_data_names_only_another_language() {
+        let mut entry = DirectoryEntry::temporary("Monster".to_owned());
+        let japanese = serde_json::to_value(entry.data()).unwrap();
+        assert!(japanese.get("language").is_none(), "{japanese}");
+        entry.language = "zh".to_owned();
+        let chinese = serde_json::to_value(entry.data()).unwrap();
+        assert_eq!(chinese["language"], "zh");
+        // The API always names the language.
+        assert_eq!(serde_json::to_value(&entry).unwrap()["language"], "zh");
+        entry.language = "ja".to_owned();
+        assert_eq!(serde_json::to_value(&entry).unwrap()["language"], "ja");
     }
 }

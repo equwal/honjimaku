@@ -8,12 +8,20 @@
 <link rel="search" href="/opensearch/dramas.xml" type="application/opensearchdescription+xml" title="Jimaku Dramas">
 {%- endif -%}
 <meta property="og:url" content="{{ url }}">
-<meta property="og:title" content="Jimaku: Japanese subtitles">
+<meta property="og:title" content="Jimaku: {{ crate::language::name(language) }} subtitles">
 {% endblock %}
 
 {% block index_nav %}
-<a class="nav-item {% if anime %}active{% endif %}" href="/">Anime</a>
-<a class="nav-item {% if !anime %}active{% endif %}" href="/dramas">Live Action</a>
+<a class="nav-item {% if anime %}active{% endif %}" href="/{{ language_query }}">Anime</a>
+<a class="nav-item {% if !anime %}active{% endif %}" href="/dramas{{ language_query }}">Live Action</a>
+<form class="nav-item language-picker" method="get" action="{% if anime %}/{% else %}/dramas{% endif %}">
+  <select name="lang" aria-label="Language of the subtitles" title="Language of the subtitles" onchange="this.form.submit()">
+    {%- for (code, name, count) in languages %}
+    <option value="{{ code }}" {% if *code == language %}selected{% endif %}>{{ name }} ({{ code }}): {{ count }}</option>
+    {%- endfor %}
+  </select>
+  <noscript><button class="button">Go</button></noscript>
+</form>
 {% endblock %}
 
 {% block body %}
@@ -58,6 +66,9 @@
 <dialog id="upload-modal">
   <form method="post" action="/entry/create" autocomplete="off">
     <h1>Create folder</h1>
+    {% if language != crate::language::DEFAULT -%}
+    <p>The new folder is for subtitles in {{ crate::language::name(language) }}.</p>
+    {%- endif %}
     <div class="form-container">
       {%- if anime -%}
       <label for="anilist-url">AniList URL</label>
@@ -77,6 +88,7 @@
       <input class="form-field" name="name" id="directory-name" autocomplete="off" type="text">
       {% endif %}
       <input type="hidden" name="anime" value="{{ anime }}">
+      <input type="hidden" name="language" value="{{ language }}">
     </div>
     <footer>
       <button id="confirm-upload" class="button primary">Create</button>
@@ -105,6 +117,7 @@
       <label for="import-file">ZIP File</label>
       <input class="form-field" autocomplete="off" type="file" id="import-file" accept="application/zip">
       <input type="hidden" name="anime" value="{{ anime }}">
+      <input type="hidden" name="language" value="{{ language }}">
       <input type="hidden" id="import-name" name="name">
     </div>
     <footer>

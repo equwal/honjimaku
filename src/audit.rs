@@ -29,6 +29,10 @@ pub struct CreateEntry {
     pub tmdb_id: Option<tmdb::Id>,
     /// Th AniList ID of the entry.
     pub anilist_id: Option<u32>,
+    /// The language of the entry as an ISO 639-1 code. Older records have none: their
+    /// entries are Japanese.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// A directory that was scraped
@@ -137,6 +141,9 @@ pub struct MoveEntry {
     /// Th AniList ID of the moved to entry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anilist_id: Option<u32>,
+    /// The language of the moved to entry, if it was created.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
     /// The moved to entry ID
     pub entry_id: i64,
     /// The files requested to be moved
@@ -152,6 +159,7 @@ impl MoveEntry {
             name: None,
             tmdb_id: None,
             anilist_id: None,
+            language: None,
             entry_id,
             created: false,
             files: Vec::new(),
@@ -292,6 +300,8 @@ pub struct EntrySnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[serde(with = "crate::models::expand_flags::option")]
     pub flags: Option<EntryFlags>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
 }
 
 /// Audit log data for an entry edit operation
@@ -335,7 +345,8 @@ pub enum AuditLogData {
     DeleteFiles(DeleteFiles),
     DeleteEntry(DeleteEntry),
     TrashAction(TrashAction),
-    EditEntry(EditEntry),
+    // Two snapshots of an entry make this variant much larger than the others, so it is boxed.
+    EditEntry(Box<EditEntry>),
     ReportFiles(ReportFiles),
     ReportEntry(ReportEntry),
     ResolveReport(ResolveReport),
@@ -367,7 +378,7 @@ impl From<TrashAction> for AuditLogData {
 
 impl From<EditEntry> for AuditLogData {
     fn from(v: EditEntry) -> Self {
-        Self::EditEntry(v)
+        Self::EditEntry(Box::new(v))
     }
 }
 
@@ -482,5 +493,40 @@ impl Table for AuditLogEntry {
             account_id: row.get("account_id")?,
             data: row.get("data")?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_edit_of_the_language_is_kept_in_the_log() {
+        let mut edit = EditEntry::default();
+        edit.before.language = Some("ja".to_owned());
+        edit.after.language = Some("zh".to_owned());
+        edit.changed = vec!["language".to_owned()];
+        let data = AuditLogData::from(edit);
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["type"], "edit_entry");
+        assert_eq!(json["before"]["language"], "ja");
+        assert_eq!(json["after"]["language"], "zh");
+        assert_eq!(serde_json::from_value::<AuditLogData>(json).unwrap(), data);
+    }
+
+    #[test]
+    fn a_record_from_before_the_languages_is_read() {
+        let old = serde_json::json!({
+            "type": "create_entry",
+            "anime": true,
+            "api": false,
+            "name": "Monster",
+            "tmdb_id": null,
+            "anilist_id": 19
+        });
+        match serde_json::from_value(old).unwrap() {
+            AuditLogData::CreateEntry(entry) => assert_eq!(entry.language, None),
+            other => panic!("{other:?}"),
+        }
     }
 }

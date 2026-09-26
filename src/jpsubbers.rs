@@ -275,7 +275,11 @@ pub async fn scrape(state: &AppState) -> anyhow::Result<Vec<Fixture>> {
             }
         } else if let Ok(Some(info)) = tmdb::find_match(&state.client, api_key, &query).await {
             // Check if it this AniList ID exists in the database already
-            if let Some(path) = state.get_tmdb_directory_entry_path(info.id).await {
+            // Jpsubbers has Japanese subtitles, so only a Japanese entry matches.
+            if let Some(path) = state
+                .get_tmdb_directory_entry_path(info.id, crate::language::DEFAULT)
+                .await
+            {
                 directory = path;
             }
             flags.set_adult(info.is_adult());

@@ -516,6 +516,16 @@ a.nav-item.active {
   font-weight: bold;
 }
 
+.language-picker {
+  display: flex;
+  align-items: center;
+}
+
+.language-picker select {
+  height: 1.75rem;
+  max-width: 14rem;
+}
+
 #settings > span {
   user-select: none;
 }
@@ -621,6 +631,10 @@ a.nav-item.active {
 
   .hamburger-menu-container > .nav-item.account {
     order: -1;
+  }
+
+  .hamburger-menu-container > .language-picker select {
+    max-width: 100%;
   }
 }
 

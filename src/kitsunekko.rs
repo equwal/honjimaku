@@ -337,7 +337,11 @@ pub async fn scrape(state: &AppState, date: OffsetDateTime) -> anyhow::Result<Ve
                 );
             } else {
                 // Check if it this AniList ID exists in the database already
-                if let Some(path) = state.get_anilist_directory_entry_path(media.id).await {
+                // Kitsunekko has Japanese subtitles, so only a Japanese entry matches.
+                if let Some(path) = state
+                    .get_anilist_directory_entry_path(media.id, crate::language::DEFAULT)
+                    .await
+                {
                     directory = path;
                 }
                 flags.set_adult(media.adult);

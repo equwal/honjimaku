@@ -374,6 +374,8 @@ const auditLogTypes = Object.freeze({
         } else {
           return html('li', 'Changed TMDB URL from ', html('a.before', before, {href: before}), ' to ', html('a.after', after, {href: after}));
         }
+      case 'language':
+        return html('li', 'Changed language from ', html('span.before', before ?? 'ja'), ' to ', html('span.after', after));
       case 'flags':
         let changes = [];
         for(const [flag, title] of Object.entries(FLAG_NAMES)) {

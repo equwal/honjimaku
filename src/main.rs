@@ -19,7 +19,7 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     timeout::TimeoutLayer,
 };
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_appender::{non_blocking::WorkerGuard, rolling::Rotation};
 use tracing_subscriber::{
     Layer as _,
@@ -268,17 +268,28 @@ async fn run_server(state: jimaku::AppState) -> anyhow::Result<()> {
     Ok(())
 }
 
-const MIGRATIONS: [&str; 4] = [
+const MIGRATIONS: [&str; 5] = [
     include_str!("../sql/0.sql"),
     include_str!("../sql/1.sql"),
     include_str!("../sql/2.sql"),
     include_str!("../sql/3.sql"),
+    include_str!("../sql/4.sql"),
 ];
 
 fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     rusqlite::vtab::array::load_module(connection)?;
-    connection.execute_batch("PRAGMA foreign_keys=1;\nPRAGMA journal_mode=wal;")?;
-    let tx = connection.transaction()?;
+    // sql/4.sql makes the table directory_entry again. With the foreign keys on, its
+    // DROP TABLE would delete the bookmarks and the notifications of each entry. So the
+    // foreign keys stay off until the migrations are done, and are then checked, as
+    // https://sqlite.org/lang_altertable.html#otheralter says. A transaction cannot change
+    // this pragma, so it is set before the transaction.
+    connection.execute_batch("PRAGMA foreign_keys=0;\nPRAGMA journal_mode=wal;")?;
+    // Each connection of the pool runs this function at the same time. The first one takes
+    // the write lock at once, and the others wait for it and then see the new version.
+    // Without the wait, a connection that is due to write a migration fails with
+    // "database is locked".
+    connection.busy_timeout(Duration::from_secs(60))?;
+    let tx = connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
     let version: usize = {
         let mut stmt = tx.prepare_cached("PRAGMA user_version;")?;
         stmt.query_row([], |r| r.get(0))?
@@ -286,7 +297,36 @@ fn init_db(connection: &mut rusqlite::Connection) -> rusqlite::Result<()> {
     for migration in MIGRATIONS.iter().skip(version) {
         tx.execute_batch(migration)?;
     }
-    tx.commit()
+    tx.commit()?;
+    if version < MIGRATIONS.len() {
+        let broken: i64 = connection.query_row("SELECT count(*) FROM pragma_foreign_key_check", [], |r| r.get(0))?;
+        if broken > 0 {
+            warn!("{broken} rows point at a row that does not exist after the migrations");
+        }
+    }
+    connection.execute_batch("PRAGMA foreign_keys=1;")
+}
+
+/// The name of the folder of an entry in a backup. One show can have an entry in each
+/// language, so the folder of an entry in another language ends with its language.
+fn backup_directory_name(entry: &jimaku::models::DirectoryEntryBackup) -> String {
+    let mut name = if entry.flags.is_anime() {
+        match entry.anilist_id {
+            Some(id) => format!("{} [{}]", entry.name, id),
+            None => entry.name.clone(),
+        }
+    } else {
+        match entry.tmdb_id {
+            Some(id) => format!("[drama] {} [{}]", entry.name, id),
+            None => format!("[drama] {}", entry.name),
+        }
+    };
+    if entry.language != jimaku::language::DEFAULT {
+        name.push_str(" [");
+        name.push_str(&entry.language);
+        name.push(']');
+    }
+    name
 }
 
 fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: PathBuf) -> anyhow::Result<()> {
@@ -307,17 +347,7 @@ fn backup_to_zip(mut entries: Vec<jimaku::models::DirectoryEntryBackup>, path: P
 
     let total_entries = entries.len();
     for (step, entry) in entries.iter_mut().enumerate() {
-        let directory_name = if entry.flags.is_anime() {
-            match entry.anilist_id {
-                Some(id) => format!("{} [{}]", entry.name, id),
-                None => entry.name.clone(),
-            }
-        } else {
-            match entry.tmdb_id {
-                Some(id) => format!("[drama] {} [{}]", entry.name, id),
-                None => format!("[drama] {}", entry.name),
-            }
-        };
+        let directory_name = backup_directory_name(entry);
 
         let Ok(iter) = std::fs::read_dir(&entry.path) else {
             println!("warning: '{}' could not be found", entry.path.display());
@@ -520,5 +550,134 @@ async fn main() {
         for e in e.chain().skip(1) {
             error!(cause = %e)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A database at user_version 4, before the languages: two entries, and rows of the
+    /// other tables that point at them.
+    fn database_before_languages() -> rusqlite::Connection {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        for migration in &MIGRATIONS[..4] {
+            connection.execute_batch(migration).unwrap();
+        }
+        connection
+            .execute_batch(
+                "INSERT INTO account(id, name, password) VALUES (1, 'reader', '');
+                 INSERT INTO directory_entry(id, path, anilist_id, name) VALUES (1, '/subtitles/Monster [19]', 19, 'Monster');
+                 INSERT INTO directory_entry(id, path, flags, tmdb_id, name)
+                   VALUES (2, '/subtitles/[drama] Hanzawa Naoki [tv:36218]', 0, 'tv:36218', 'Hanzawa Naoki');
+                 INSERT INTO bookmark(user_id, entry_id) VALUES (1, 1);
+                 INSERT INTO notification(ts, entry_id, user_id, payload) VALUES (0, 1, 1, '{}');
+                 INSERT INTO report(id, account_id, entry_id, reason) VALUES (1, 1, 2, 'wrong files');
+                 INSERT INTO audit_log(entry_id, account_id, data) VALUES (2, 1, '{}');",
+            )
+            .unwrap();
+        connection
+    }
+
+    fn count(connection: &rusqlite::Connection, sql: &str) -> i64 {
+        connection.query_row(sql, [], |row| row.get(0)).unwrap()
+    }
+
+    #[test]
+    fn the_rows_that_point_at_an_entry_stay_when_the_languages_are_added() {
+        let mut connection = database_before_languages();
+        init_db(&mut connection).unwrap();
+
+        assert_eq!(count(&connection, "PRAGMA user_version"), MIGRATIONS.len() as i64);
+        assert_eq!(
+            count(&connection, "SELECT count(*) FROM bookmark WHERE entry_id = 1"),
+            1
+        );
+        assert_eq!(
+            count(&connection, "SELECT count(*) FROM notification WHERE entry_id = 1"),
+            1
+        );
+        assert_eq!(count(&connection, "SELECT count(*) FROM report WHERE entry_id = 2"), 1);
+        assert_eq!(
+            count(&connection, "SELECT count(*) FROM audit_log WHERE entry_id = 2"),
+            1
+        );
+        assert_eq!(
+            count(
+                &connection,
+                "SELECT count(*) FROM directory_entry WHERE language = 'ja'"
+            ),
+            2,
+            "the entries that exist are Japanese"
+        );
+        assert_eq!(count(&connection, "SELECT count(*) FROM pragma_foreign_key_check"), 0);
+        assert_eq!(
+            count(&connection, "PRAGMA foreign_keys"),
+            1,
+            "the foreign keys are on again"
+        );
+    }
+
+    #[test]
+    fn an_id_is_unique_for_one_language() {
+        let mut connection = database_before_languages();
+        init_db(&mut connection).unwrap();
+
+        // The Chinese subtitles of the same anime and of the same drama get entries of their own.
+        connection
+            .execute_batch(
+                "INSERT INTO directory_entry(path, anilist_id, name, language)
+                   VALUES ('/subtitles/Monster [19] [zh]', 19, 'Monster', 'zh');
+                 INSERT INTO directory_entry(path, flags, tmdb_id, name, language)
+                   VALUES ('/subtitles/[drama] Hanzawa Naoki [tv:36218] [zh]', 0, 'tv:36218', 'Hanzawa Naoki', 'zh');",
+            )
+            .unwrap();
+
+        // A second entry of the same show in the same language is refused.
+        for sql in [
+            "INSERT INTO directory_entry(path, anilist_id, name) VALUES ('/subtitles/Monster 2 [19]', 19, 'Monster 2')",
+            "INSERT INTO directory_entry(path, flags, tmdb_id, name, language)
+               VALUES ('/subtitles/other', 0, 'tv:36218', 'Hanzawa Naoki 2', 'zh')",
+        ] {
+            let error = connection.execute(sql, []).unwrap_err();
+            assert!(jimaku::database::is_unique_constraint_violation(&error), "{error}");
+        }
+    }
+
+    #[test]
+    fn a_backup_has_a_folder_for_each_language() {
+        let mut entry = jimaku::models::DirectoryEntry::temporary("Monster".to_owned());
+        entry.anilist_id = Some(19);
+        entry.flags.set_anime(true);
+        assert_eq!(backup_directory_name(&entry.clone().backup()), "Monster [19]");
+        entry.language = "zh".to_owned();
+        assert_eq!(backup_directory_name(&entry.backup()), "Monster [19] [zh]");
+    }
+
+    #[test]
+    fn an_entry_of_an_older_backup_is_japanese() {
+        let mut entry = jimaku::models::DirectoryEntry::temporary("Monster".to_owned());
+        entry.language = "zh".to_owned();
+        let mut json = serde_json::to_value(entry.backup()).unwrap();
+        assert_eq!(json["language"], "zh");
+        json.as_object_mut().unwrap().remove("language");
+        let older: jimaku::models::DirectoryEntryBackup = serde_json::from_value(json).unwrap();
+        assert_eq!(older.language, "ja");
+    }
+
+    #[test]
+    fn a_new_database_makes_japanese_entries() {
+        let mut connection = rusqlite::Connection::open_in_memory().unwrap();
+        init_db(&mut connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO directory_entry(path, name) VALUES ('/subtitles/a', 'a')",
+                [],
+            )
+            .unwrap();
+        let language: String = connection
+            .query_row("SELECT language FROM directory_entry", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(language, "ja");
     }
 }

@@ -12,8 +12,11 @@
 <p>
   Please check over the information below to ensure it's correct before creating this entry.
 </p>
+{% if pending.language != crate::language::DEFAULT -%}
+<p>The entry is for subtitles in {{ crate::language::name(pending.language.as_str()) }}.</p>
+{%- endif %}
 <hr>
-<form class="form-container" autocomplete="off" action="/entry/import/create?anime={{ anime }}">
+<form class="form-container" autocomplete="off" action="/entry/import/create?anime={{ anime }}&amp;language={{ pending.language }}">
     <label for="entry-name">Name</label>
     <input class="form-field" required value="{{ pending.name }}" name="name"
            id="entry-name" autocomplete="off" type="text">

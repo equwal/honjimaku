@@ -690,7 +690,8 @@ async function populateAnimeRelations() {
       'content-type': 'application/json',
     },
     body: JSON.stringify({
-      anilist_ids: ids
+      anilist_ids: ids,
+      language: entryData.language,
     })
   });
   if (!response.ok) {

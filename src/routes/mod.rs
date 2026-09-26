@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+
 use crate::{
     cached::BodyCache,
     error::{ApiError, InternalError},
     filters,
     flash::Flashes,
     headers::{AcceptEncoding, UserAgent},
+    language,
     models::{Account, AccountCheck},
     utils::HtmlPage,
 };
@@ -11,7 +14,7 @@ use askama::Template;
 use axum::{
     Extension, Router,
     extract::{Path, Query, State},
-    response::{IntoResponse, Redirect},
+    response::{IntoResponse, Redirect, Response},
     routing::get,
 };
 use reqwest::header::{CONTENT_TYPE, USER_AGENT};
@@ -43,6 +46,75 @@ where
     url: String,
     anime: bool,
     editor: bool,
+    /// The ISO 639-1 code of the language of the listing.
+    language: &'static str,
+    /// Each language as (code, name, number of entries in this listing), the most entries first.
+    languages: Vec<(&'static str, &'static str, usize)>,
+    /// The query that keeps the language in a link to the other listing. It is empty for
+    /// the default language.
+    language_query: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ListingQuery {
+    /// The ISO 639-1 code of the language to list. The default is Japanese.
+    #[serde(default)]
+    lang: Option<String>,
+}
+
+/// The listing of the anime (at "/") or of the live action shows (at "/dramas"), in one language.
+async fn listing(
+    state: AppState,
+    account: Option<Account>,
+    flashes: Flashes,
+    encoding: AcceptEncoding,
+    cacher: BodyCache,
+    query: ListingQuery,
+    anime: bool,
+) -> Response {
+    let path = if anime { "/" } else { "/dramas" };
+    let Some(language) = language::code_or_default(query.lang.as_deref()) else {
+        // A language that is not an ISO 639-1 code shows the listing in the default language.
+        return Redirect::to(path).into_response();
+    };
+    let entries = state.directory_entries().await;
+    let mut counts: HashMap<&str, usize> = HashMap::new();
+    for entry in entries.iter().filter(|e| e.flags.is_anime() == anime) {
+        *counts.entry(entry.language.as_str()).or_default() += 1;
+    }
+    let languages = language::by_count(|code| counts.get(code).copied().unwrap_or_default());
+    let language_query = if language == language::DEFAULT {
+        String::new()
+    } else {
+        format!("?lang={language}")
+    };
+    let url = if anime && language_query.is_empty() {
+        state.config().canonical_url()
+    } else {
+        state.config().url_to(format!("{path}{language_query}"))
+    };
+    // The cache holds few pages, and a listing in another language has few entries. So
+    // only the listings in the default language are cached.
+    let bypass_cache = account.is_some() || language != language::DEFAULT;
+    let editor = account.flags().is_editor();
+    let template = ListingTemplate {
+        account,
+        entries: entries
+            .iter()
+            .filter(move |e| e.flags.is_anime() == anime && e.language == language),
+        flashes,
+        url,
+        anime,
+        editor,
+        language,
+        languages,
+        language_query,
+    };
+    let key = if anime { "index" } else { "dramas" };
+    cacher
+        .cache_template(key, template, encoding, bypass_cache)
+        .await
+        .into_response()
 }
 
 async fn index(
@@ -51,19 +123,9 @@ async fn index(
     flashes: Flashes,
     encoding: AcceptEncoding,
     Extension(cacher): Extension<BodyCache>,
-) -> impl IntoResponse {
-    let entries = state.directory_entries().await;
-    let bypass_cache = account.is_some();
-    let editor = account.flags().is_editor();
-    let template = ListingTemplate {
-        account,
-        entries: entries.iter().filter(|e| e.flags.is_anime()),
-        flashes,
-        url: state.config().canonical_url(),
-        anime: true,
-        editor,
-    };
-    cacher.cache_template("index", template, encoding, bypass_cache).await
+    Query(query): Query<ListingQuery>,
+) -> Response {
+    listing(state, account, flashes, encoding, cacher, query, true).await
 }
 
 async fn dramas(
@@ -72,19 +134,9 @@ async fn dramas(
     flashes: Flashes,
     encoding: AcceptEncoding,
     Extension(cacher): Extension<BodyCache>,
-) -> impl IntoResponse {
-    let entries = state.directory_entries().await;
-    let bypass_cache = account.is_some();
-    let editor = account.flags().is_editor();
-    let template = ListingTemplate {
-        account,
-        entries: entries.iter().filter(|e| !e.flags.is_anime()),
-        flashes,
-        url: state.config().url_to("/dramas"),
-        anime: false,
-        editor,
-    };
-    cacher.cache_template("dramas", template, encoding, bypass_cache).await
+    Query(query): Query<ListingQuery>,
+) -> Response {
+    listing(state, account, flashes, encoding, cacher, query, false).await
 }
 
 #[derive(Template)]

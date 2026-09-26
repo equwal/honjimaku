@@ -58,6 +58,9 @@
     {% if entry.flags.is_external() -%}
     <span class="badge info" title="Entry originated from an outside source">External</span>
     {% endif -%}
+    {% if entry.language != crate::language::DEFAULT -%}
+    <span class="badge info" title="Language of the subtitles">{{ crate::language::name(entry.language.as_str()) }}</span>
+    {% endif -%}
     {% if let Some(account) = account -%}
     <a class="icon-button" id="bookmark" data-id="{{ entry.id}}" data-bookmarked="{{ bookmarked}}">
       {% if bookmarked -%}
@@ -167,6 +170,12 @@
              pattern="{{ crate::filters::TMDB_PATTERN }}"
              placeholder="https://www.themoviedb.org/tv/12345" name="tmdb_url" id="entry-tmdb-url"
              autocomplete="off" type="text">
+      <label for="entry-language">Language</label>
+      <select class="form-field" name="language" id="entry-language" autocomplete="off">
+        {%- for (code, name) in crate::language::all() %}
+        <option value="{{ code }}" {% if *code == entry.language.as_str() %}selected{% endif %}>{{ name }} ({{ code }})</option>
+        {%- endfor %}
+      </select>
       <div class="form-field checkboxes">
         <div class="checkbox-container">
           <input value="true" {%- if entry.flags.is_unverified() -%}checked{% endif %}

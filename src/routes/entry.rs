@@ -150,6 +150,8 @@ struct CreateDirectoryEntry {
     name: Option<String>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -161,6 +163,8 @@ pub struct PendingDirectoryEntry {
     pub flags: Option<EntryFlags>,
     pub notes: Option<String>,
     pub anime: bool,
+    /// The language of the subtitles as an ISO 639-1 code. `None` is the default language.
+    pub language: Option<String>,
 }
 
 impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
@@ -173,6 +177,7 @@ impl From<CreateDirectoryEntry> for PendingDirectoryEntry {
             notes: None,
             titles: None,
             flags: None,
+            language: value.language,
         }
     }
 }
@@ -213,8 +218,8 @@ impl PendingDirectoryEntry {
         }
     }
 
-    fn path(&self, name: &str, anime: bool, state: &AppState) -> PathBuf {
-        directory_entry_path(self.anilist_id, self.tmdb_id, name, anime, state)
+    fn path(&self, name: &str, anime: bool, language: &str, state: &AppState) -> PathBuf {
+        directory_entry_path(self.anilist_id, self.tmdb_id, name, anime, language, state)
     }
 }
 
@@ -223,8 +228,22 @@ pub fn directory_entry_path(
     tmdb_id: Option<tmdb::Id>,
     name: &str,
     anime: bool,
+    language: &str,
     state: &AppState,
 ) -> PathBuf {
+    state
+        .config()
+        .subtitle_path
+        .join(directory_name(anilist_id, tmdb_id, name, anime, language))
+}
+
+fn directory_name(
+    anilist_id: Option<u32>,
+    tmdb_id: Option<tmdb::Id>,
+    name: &str,
+    anime: bool,
+    language: &str,
+) -> String {
     // Series names aren't unique but directory names are
     // So try to give it some noise depending on the anilist ID or tmdb ID
     // This ordeal could also be entirely avoided by just using numeric folder names
@@ -233,20 +252,21 @@ pub fn directory_entry_path(
     // A prefix is used for the flat directory structure since it's easier to
     // reason about in the code.
     let prefix = if !anime { "[drama] " } else { "" };
-    let directory_name = if let Some(id) = anilist_id {
-        sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
+    let mut directory_name = if let Some(id) = anilist_id {
+        format!("{prefix}{name} [{id}]")
     } else if let Some(id) = tmdb_id {
-        sanitise_file_name::sanitise(&format!("{prefix}{name} [{id}]"))
+        format!("{prefix}{name} [{id}]")
     } else {
-        // Avoid the extra allocation if possible
-        if anime {
-            sanitise_file_name::sanitise(name)
-        } else {
-            sanitise_file_name::sanitise(&format!("[drama] {name}"))
-        }
+        format!("{prefix}{name}")
     };
-
-    state.config().subtitle_path.join(directory_name)
+    // One show can have an entry in each language, so the folder of an entry in another
+    // language ends with its language. The folders of the Japanese entries stay as they are.
+    if language != crate::language::DEFAULT {
+        directory_name.push_str(" [");
+        directory_name.push_str(language);
+        directory_name.push(']');
+    }
+    sanitise_file_name::sanitise(&directory_name)
 }
 
 pub async fn raw_create_directory_entry(
@@ -260,6 +280,10 @@ pub async fn raw_create_directory_entry(
     if account.flags.is_restricted() {
         return Err(ApiError::new("Account is restricted from uploading").with_code(ApiErrorCode::NoPermissions));
     }
+
+    let Some(language) = crate::language::code_or_default(pending.language.as_deref()) else {
+        return Err(ApiError::new(crate::language::UNKNOWN));
+    };
 
     let (names, flags) = match pending.get_info(state).await? {
         Some(title) => title,
@@ -275,7 +299,7 @@ pub async fn raw_create_directory_entry(
         None => return Err(ApiError::new("Missing anilist_id or tmdb_id for directory.")),
     };
 
-    let path = pending.path(&names.romaji, pending.anime, state);
+    let path = pending.path(&names.romaji, pending.anime, language, state);
     if path.exists() {
         return Err(ApiError::new("Path already exists.").with_code(ApiErrorCode::EntryAlreadyExists));
     }
@@ -285,8 +309,8 @@ pub async fn raw_create_directory_entry(
     };
 
     let query = r#"
-        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO directory_entry(path, creator_id, tmdb_id, anilist_id, flags, notes, name, english_name, japanese_name, language)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         RETURNING id;
     "#;
     let path_string = path_string.to_owned();
@@ -308,6 +332,7 @@ pub async fn raw_create_directory_entry(
                         names.romaji,
                         names.english,
                         names.native,
+                        language,
                     ),
                     |row| row.get("id"),
                 )
@@ -339,6 +364,7 @@ pub async fn raw_create_directory_entry(
             name: romaji.clone(),
             tmdb_id: pending.tmdb_id,
             anilist_id: pending.anilist_id,
+            language: Some(language.to_owned()),
         };
         state
             .audit(audit::AuditLogEntry::full(audit_data, *entry_id, account.id))
@@ -361,6 +387,7 @@ pub async fn raw_create_directory_entry(
                 .url(format!("/entry/{entry_id}"))
                 .account(account)
                 .field("Anime", pending.anime)
+                .field("Language", crate::language::name(language))
                 .field("AniList URL", anilist_url)
                 .field("TMDB URL", tmdb_url),
         );
@@ -404,6 +431,9 @@ struct EditDirectoryEntry {
     movie: bool,
     #[serde(default)]
     anime: bool,
+    /// The new language as an ISO 639-1 code. `None` keeps the language of the entry.
+    #[serde(default, deserialize_with = "crate::utils::empty_string_is_none")]
+    language: Option<String>,
 }
 
 impl EditDirectoryEntry {
@@ -501,14 +531,24 @@ async fn edit_directory_entry(
         return Redirect::to(&url).into_response();
     }
 
+    let language = match payload.language.as_deref() {
+        None => entry.language.clone(),
+        Some(raw) => match crate::language::code(raw) {
+            Some(code) => code.to_owned(),
+            None => return flasher.add(crate::language::UNKNOWN).bail(&url),
+        },
+    };
+
     // maybe refactor this?
-    let mut columns = Vec::with_capacity(11);
-    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::with_capacity(12);
+    let mut columns = Vec::with_capacity(12);
+    let mut params: Vec<Box<dyn rusqlite::ToSql + Send>> = Vec::with_capacity(13);
     let mut audit_data = audit::EditEntry::default();
     let flags = payload.apply_flags(entry.flags);
     let mut changed_path: Option<PathBuf> = None;
 
-    if !flags.is_external() && (entry.anilist_id != payload.anilist_id || entry.tmdb_id != payload.tmdb_id) {
+    if !flags.is_external()
+        && (entry.anilist_id != payload.anilist_id || entry.tmdb_id != payload.tmdb_id || entry.language != language)
+    {
         // Change the internal path if the path bound data is changed...
         columns.push("path");
         let path = directory_entry_path(
@@ -516,6 +556,7 @@ async fn edit_directory_entry(
             payload.tmdb_id,
             payload.name.as_str(),
             flags.is_anime(),
+            &language,
             &state,
         );
         if path.exists() {
@@ -573,6 +614,12 @@ async fn edit_directory_entry(
         audit_data.after.flags = Some(flags);
         params.push(Box::new(flags));
     }
+    if entry.language != language {
+        columns.push("language");
+        audit_data.before.language = Some(entry.language.clone());
+        audit_data.after.language = Some(language.clone());
+        params.push(Box::new(language));
+    }
 
     if !columns.is_empty() {
         params.push(Box::new(entry_id));
@@ -601,9 +648,14 @@ async fn edit_directory_entry(
                 if error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE =>
             {
                 if let Some(suffix) = s.strip_prefix("UNIQUE constraint failed: directory_entry.") {
-                    flasher
-                        .add(format!("An entry already exists with this {suffix} field."))
-                        .bail(&url)
+                    // A unique index of two columns names both: "anilist_id, directory_entry.language".
+                    let message = match suffix.split_once(", directory_entry.language") {
+                        Some((column, _)) => {
+                            format!("An entry in this language already exists with this {column} field.")
+                        }
+                        None => format!("An entry already exists with this {suffix} field."),
+                    };
+                    flasher.add(message).bail(&url)
                 } else {
                     flasher
                         .add("An entry already exists with one of these fields.")
@@ -625,6 +677,9 @@ struct SearchQueryParams {
     tmdb_id: Option<String>,
     #[serde(default)]
     name: Option<String>,
+    /// The language of the entry as an ISO 639-1 code. The default is Japanese.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -645,6 +700,10 @@ async fn search_directory_entries(
         return Err(ApiError::new("Missing search parameter"));
     }
 
+    let Some(language) = crate::language::code_or_default(params.language.as_deref()) else {
+        return Err(ApiError::new(crate::language::UNKNOWN));
+    };
+
     let path = params
         .name
         .as_deref()
@@ -654,8 +713,8 @@ async fn search_directory_entries(
     let entry = state
         .database()
         .get_row(
-            "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR name = ? OR path = ?",
-            (params.anilist_id, params.tmdb_id, params.name, path),
+            "SELECT id FROM directory_entry WHERE language = ? AND (anilist_id = ? OR tmdb_id = ? OR name = ? OR path = ?)",
+            (language, params.anilist_id, params.tmdb_id, params.name, path),
             |row| row.get(0),
         )
         .await
@@ -678,6 +737,10 @@ struct MoveDirectoryEntries {
     entry_id: Option<i64>,
     #[serde(default = "crate::utils::default_true")]
     anime: bool,
+    /// The language of a new entry as an ISO 639-1 code. The default is the language of the
+    /// entry that the files come from.
+    #[serde(default)]
+    language: Option<String>,
     files: Vec<String>,
 }
 
@@ -698,9 +761,10 @@ async fn move_directory_entries(
         return Err(ApiError::forbidden());
     }
 
-    let Some(entry) = state.get_directory_entry_path(from_entry_id).await else {
+    let Some(from) = state.get_directory_entry(from_entry_id).await else {
         return Err(ApiError::not_found("Directory entry not found."));
     };
+    let entry = from.path;
     let (entry_id, path, mut audit_data) = match payload.entry_id {
         Some(entry_id) => {
             let Some(path) = state.get_directory_entry_path(entry_id).await else {
@@ -709,6 +773,12 @@ async fn move_directory_entries(
             (entry_id, path, audit::MoveEntry::new(entry_id))
         }
         None => {
+            let language = match payload.language.as_deref() {
+                None => from.language,
+                Some(raw) => crate::language::code(raw)
+                    .ok_or_else(|| ApiError::new(crate::language::UNKNOWN))?
+                    .to_owned(),
+            };
             let (entry_id, path) = raw_create_directory_entry(
                 &state,
                 account.clone(),
@@ -720,6 +790,7 @@ async fn move_directory_entries(
                     titles: None,
                     flags: None,
                     notes: None,
+                    language: Some(language.clone()),
                 },
                 false,
             )
@@ -729,6 +800,7 @@ async fn move_directory_entries(
                 name: payload.name.clone(),
                 tmdb_id: payload.tmdb_id,
                 anilist_id: payload.anilist_id,
+                language: Some(language),
                 entry_id,
                 created: true,
                 files: Vec::new(),
@@ -1301,6 +1373,34 @@ async fn remove_bookmark(
 #[derive(Deserialize)]
 struct RelationsRequest {
     anilist_ids: Vec<u32>,
+    /// The language of the entries as an ISO 639-1 code. The default is Japanese.
+    #[serde(default)]
+    language: Option<String>,
+}
+
+type SqlParams = Vec<Box<dyn rusqlite::ToSql + Send>>;
+
+/// The query for the entries in one language that have one of `ids` in `column`, and its parameters.
+fn select_by_ids<T: rusqlite::ToSql + Send + 'static>(
+    column: &str,
+    language: Option<&str>,
+    ids: Vec<T>,
+) -> Result<(String, SqlParams), ApiError> {
+    let Some(language) = crate::language::code_or_default(language) else {
+        return Err(ApiError::new(crate::language::UNKNOWN));
+    };
+    let mut query = format!("SELECT * FROM directory_entry WHERE language = ? AND {column} IN (");
+    let mut params: SqlParams = Vec::with_capacity(ids.len() + 1);
+    params.push(Box::new(language));
+    for id in ids {
+        query.push_str("?,");
+        params.push(Box::new(id));
+    }
+    if query.ends_with(',') {
+        query.pop();
+    }
+    query.push(')');
+    Ok((query, params))
 }
 
 async fn relations(
@@ -1310,19 +1410,8 @@ async fn relations(
     if requested.anilist_ids.len() > 250 {
         return Err(ApiError::new("Can only request up to 250 AniList IDs"));
     }
-    let mut query = "SELECT * FROM directory_entry WHERE anilist_id IN (".to_string();
-    for _ in &requested.anilist_ids {
-        query.push('?');
-        query.push(',');
-    }
-    if query.ends_with(',') {
-        query.pop();
-    }
-    query.push(')');
-    let entries = state
-        .database()
-        .all(query, rusqlite::params_from_iter(requested.anilist_ids))
-        .await?;
+    let (query, params) = select_by_ids("anilist_id", requested.language.as_deref(), requested.anilist_ids)?;
+    let entries = state.database().all(query, rusqlite::params_from_iter(params)).await?;
 
     Ok(Json(entries))
 }
@@ -1330,6 +1419,9 @@ async fn relations(
 #[derive(Deserialize)]
 struct BulkTmdbLookupRequest {
     tmdb_ids: Vec<tmdb::Id>,
+    /// The language of the entries as an ISO 639-1 code. The default is Japanese.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 async fn bulk_tmdb_lookup(
@@ -1339,19 +1431,8 @@ async fn bulk_tmdb_lookup(
     if requested.tmdb_ids.len() > 250 {
         return Err(ApiError::new("Can only request up to 250 TMDB IDs"));
     }
-    let mut query = "SELECT * FROM directory_entry WHERE tmdb_id IN (".to_string();
-    for _ in &requested.tmdb_ids {
-        query.push('?');
-        query.push(',');
-    }
-    if query.ends_with(',') {
-        query.pop();
-    }
-    query.push(')');
-    let entries = state
-        .database()
-        .all(query, rusqlite::params_from_iter(requested.tmdb_ids))
-        .await?;
+    let (query, params) = select_by_ids("tmdb_id", requested.language.as_deref(), requested.tmdb_ids)?;
+    let entries = state.database().all(query, rusqlite::params_from_iter(params)).await?;
 
     Ok(Json(entries))
 }
@@ -1371,19 +1452,8 @@ async fn get_full_data_from_anilist(
     if requested.anilist_ids.len() > 250 {
         return Err(ApiError::new("Can only request up to 250 AniList IDs"));
     }
-    let mut query = "SELECT * FROM directory_entry WHERE anilist_id IN (".to_string();
-    for _ in &requested.anilist_ids {
-        query.push('?');
-        query.push(',');
-    }
-    if query.ends_with(',') {
-        query.pop();
-    }
-    query.push(')');
-    let entries: Vec<DirectoryEntry> = state
-        .database()
-        .all(query, rusqlite::params_from_iter(requested.anilist_ids))
-        .await?;
+    let (query, params) = select_by_ids("anilist_id", requested.language.as_deref(), requested.anilist_ids)?;
+    let entries: Vec<DirectoryEntry> = state.database().all(query, rusqlite::params_from_iter(params)).await?;
 
     let bookmarks = match &account {
         Some(account) => state.bookmarked_ids(account.id).await?,
@@ -1441,6 +1511,8 @@ async fn tmdb_lookup(
 struct ImportEntry {
     anime: bool,
     name: String,
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Template)]
@@ -1452,9 +1524,15 @@ struct ImportEntryTemplate {
     anime: bool,
 }
 
-async fn get_pending_directory_entry(state: &AppState, anime: bool, name: String) -> DirectoryEntry {
+async fn get_pending_directory_entry(
+    state: &AppState,
+    anime: bool,
+    name: String,
+    language: &'static str,
+) -> DirectoryEntry {
     let mut temporary = DirectoryEntry::temporary(name.clone());
     temporary.flags.set_anime(anime);
+    temporary.language = language.to_owned();
     if anime {
         let media = anilist::search(&state.client, &name)
             .await
@@ -1493,7 +1571,10 @@ async fn import_entry(
         return flasher.add("You do not have permissions to do this.").bail("/");
     }
 
-    let pending = get_pending_directory_entry(&state, payload.anime, payload.name).await;
+    let Some(language) = crate::language::code_or_default(payload.language.as_deref()) else {
+        return flasher.add(crate::language::UNKNOWN).bail("/");
+    };
+    let pending = get_pending_directory_entry(&state, payload.anime, payload.name, language).await;
     let mut response = HtmlPage(ImportEntryTemplate {
         account: Some(account),
         flashes,
@@ -1510,6 +1591,8 @@ async fn import_entry(
 #[derive(Deserialize)]
 struct ImportQuery {
     anime: bool,
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -1540,6 +1623,9 @@ async fn create_imported_entry(
         return Err(ApiError::new(validation_errors.join("\n")));
     }
 
+    let Some(language) = crate::language::code_or_default(query.language.as_deref()) else {
+        return Err(ApiError::new(crate::language::UNKNOWN));
+    };
     let mut flags = payload.inner.apply_flags(EntryFlags::new());
     flags.set_anime(query.anime);
     let pending = PendingDirectoryEntry {
@@ -1550,10 +1636,16 @@ async fn create_imported_entry(
         anime: query.anime,
         notes: payload.inner.notes.clone(),
         titles: Some(payload.inner.titles()),
+        language: Some(language.to_owned()),
     };
 
     // Unfortunately have to pay this cost twice
-    let path = pending.path(pending.titles.as_ref().unwrap().romaji.as_str(), pending.anime, &state);
+    let path = pending.path(
+        pending.titles.as_ref().unwrap().romaji.as_str(),
+        pending.anime,
+        language,
+        &state,
+    );
     let anilist_id = pending.anilist_id;
     let tmdb_id = pending.tmdb_id;
     let account_id = account.id;
@@ -1563,8 +1655,8 @@ async fn create_imported_entry(
         Err(e) if e.code == ApiErrorCode::EntryAlreadyExists => state
             .database()
             .get_row(
-                "SELECT id, path FROM directory_entry WHERE path = ? OR anilist_id = ? OR tmdb_id = ?",
-                (path.display().to_string(), anilist_id, tmdb_id),
+                "SELECT id, path FROM directory_entry WHERE path = ? OR (language = ? AND (anilist_id = ? OR tmdb_id = ?))",
+                (path.display().to_string(), language, anilist_id, tmdb_id),
                 |row| Ok((row.get("id")?, PathBuf::from(row.get::<_, String>("path")?))),
             )
             .await
@@ -1648,4 +1740,54 @@ pub fn routes() -> Router<AppState> {
                 .delete(remove_bookmark)
                 .layer(RateLimit::default().build()),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_in_another_language_ends_with_the_language() {
+        let tv: tmdb::Id = "tv:36218".parse().unwrap();
+        // The folders of Japanese entries do not change.
+        assert_eq!(directory_name(Some(19), None, "Monster", true, "ja"), "Monster [19]");
+        assert_eq!(directory_name(None, None, "Monster", true, "ja"), "Monster");
+        assert_eq!(
+            directory_name(None, Some(tv), "Hanzawa Naoki", false, "ja"),
+            "[drama] Hanzawa Naoki [tv_36218]"
+        );
+        assert_eq!(
+            directory_name(None, None, "Hanzawa Naoki", false, "ja"),
+            "[drama] Hanzawa Naoki"
+        );
+        // The same show in another language gets a folder of its own.
+        assert_eq!(
+            directory_name(Some(19), None, "Monster", true, "zh"),
+            "Monster [19] [zh]"
+        );
+        assert_eq!(
+            directory_name(None, Some(tv), "Hanzawa Naoki", false, "zh"),
+            "[drama] Hanzawa Naoki [tv_36218] [zh]"
+        );
+        assert_eq!(directory_name(None, None, "Monster", true, "en"), "Monster [en]");
+    }
+
+    #[test]
+    fn the_ids_are_looked_up_in_one_language() {
+        let (query, params) = select_by_ids("anilist_id", None, vec![1u32, 2, 3]).unwrap();
+        assert_eq!(
+            query,
+            "SELECT * FROM directory_entry WHERE language = ? AND anilist_id IN (?,?,?)"
+        );
+        assert_eq!(params.len(), 4);
+        assert_eq!(params[0].to_sql().unwrap(), rusqlite::types::ToSqlOutput::from("ja"));
+        let (query, params) = select_by_ids("tmdb_id", Some("ZH"), Vec::<u32>::new()).unwrap();
+        assert_eq!(
+            query,
+            "SELECT * FROM directory_entry WHERE language = ? AND tmdb_id IN ()"
+        );
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].to_sql().unwrap(), rusqlite::types::ToSqlOutput::from("zh"));
+        assert!(select_by_ids("anilist_id", Some("chinese"), vec![1u32]).is_err());
+    }
 }

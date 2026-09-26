@@ -18,6 +18,12 @@ Each directory entry has a set of files that can be downloaded.
 
 A TMDB ID is encoded in string form in either `tv:id` or `movie:id` form (for example, `tv:1234`). In the future this syntax might be extended to support seasons in a TV show.
 
+#### Languages
+
+Each entry holds subtitles in one language. Its `language` field is an ISO 639-1 code, for example `ja` or `zh`. One show can have an entry in each language, so an AniList ID or a TMDB ID is unique for one language only.
+
+The search and create endpoints take an optional `language` parameter. The default is `ja`, so a client that does not send it gets the Japanese entries.
+
 ### Rate Limits
 
 Rate limits are enforced at an IP level to prevent abuse and spam on the service. When a rate limit is hit, an HTTP 429 status code is returned with some header information telling you how to proceed.

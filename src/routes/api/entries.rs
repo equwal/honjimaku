@@ -184,9 +184,22 @@ pub struct SearchQuery {
     /// Return entries that are before this UNIX timestamp (in seconds).
     #[serde(default)]
     pub before: Option<i64>,
+
+    /// Return entries with subtitles in this language, an ISO 639-1 code such as `zh`.
+    ///
+    /// The default is `ja`.
+    #[serde(deserialize_with = "crate::utils::empty_string_is_none")]
+    #[serde(default)]
+    #[param(example = "ja")]
+    pub language: Option<String>,
 }
 
 impl SearchQuery {
+    /// The language to return entries in.
+    fn language(&self) -> &str {
+        self.language.as_deref().unwrap_or(crate::language::DEFAULT)
+    }
+
     fn get_best_fuzzy_score(&self, entry: &DirectoryEntry) -> Option<sublime_fuzzy::Match> {
         let query = self.query.as_deref()?;
         let mut max = sublime_fuzzy::best_match(query, &entry.name);
@@ -201,6 +214,11 @@ impl SearchQuery {
 
     pub fn apply(&self, entry: &DirectoryEntry) -> Option<isize> {
         if self.anime != entry.flags.is_anime() {
+            return None;
+        }
+
+        // One show can have an entry in each language, so this check is before the ID checks.
+        if !entry.language.eq_ignore_ascii_case(self.language().trim()) {
             return None;
         }
 
@@ -295,6 +313,12 @@ pub struct CreatePayload {
     /// This is only available for API keys bound to editor users.
     #[serde(default, with = "crate::models::expand_flags::option")]
     flags: Option<EntryFlags>,
+    /// Create an entry for subtitles in this language, an ISO 639-1 code such as `zh`.
+    ///
+    /// The default is `ja`.
+    #[serde(default)]
+    #[schema(example = "ja")]
+    language: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -308,8 +332,8 @@ pub struct CreateEntryResult {
 /// Creates an entry backed by an AniList or TMDB ID.
 ///
 /// This endpoint is atomic. If an entry already exists with
-/// the given AniList or TMDB ID then that pre-existing entry
-/// is returned instead.
+/// the given AniList or TMDB ID in the given language then that
+/// pre-existing entry is returned instead.
 ///
 /// An entry becomes an anime entry if an AniList ID is given.
 ///
@@ -367,12 +391,16 @@ pub async fn create_entry(
         None
     };
 
+    let Some(language) = crate::language::code_or_default(payload.language.as_deref()) else {
+        return Err(ApiError::new(crate::language::UNKNOWN));
+    };
     let pending = PendingDirectoryEntry {
         anime: anilist_id.is_some(),
         anilist_id,
         tmdb_id,
         titles,
         flags,
+        language: Some(language.to_owned()),
         ..Default::default()
     };
 
@@ -381,8 +409,8 @@ pub async fn create_entry(
         Err(e) if e.code == ApiErrorCode::EntryAlreadyExists => state
             .database()
             .get_row(
-                "SELECT id FROM directory_entry WHERE anilist_id = ? OR tmdb_id = ? OR name = ?",
-                (anilist_id, tmdb_id, payload.name),
+                "SELECT id FROM directory_entry WHERE language = ? AND (anilist_id = ? OR tmdb_id = ? OR name = ?)",
+                (language, anilist_id, tmdb_id, payload.name),
                 |row| row.get("id"),
             )
             .await
@@ -445,4 +473,49 @@ pub async fn upload_files(
         return Err(ApiError::new("Upload failed"));
     }
     Ok(Json(result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn anime(id: i64, anilist_id: u32, language: &str) -> DirectoryEntry {
+        let mut entry = DirectoryEntry::temporary("Monster".to_owned());
+        entry.id = id;
+        entry.anilist_id = Some(anilist_id);
+        entry.flags.set_anime(true);
+        entry.language = language.to_owned();
+        entry
+    }
+
+    #[test]
+    fn a_search_finds_the_entries_of_one_language() {
+        let entries = [anime(1, 19, "ja"), anime(2, 19, "zh")];
+        let found = |query: &SearchQuery| -> Vec<i64> {
+            entries
+                .iter()
+                .filter(|e| query.apply(e).is_some())
+                .map(|e| e.id)
+                .collect()
+        };
+
+        let mut query = SearchQuery {
+            anime: true,
+            anilist_id: Some(19),
+            ..Default::default()
+        };
+        assert_eq!(
+            found(&query),
+            [1],
+            "a search that names no language finds Japanese entries"
+        );
+        query.language = Some("zh".to_owned());
+        assert_eq!(found(&query), [2]);
+        query.language = Some("ZH".to_owned());
+        assert_eq!(found(&query), [2]);
+        query.anilist_id = None;
+        assert_eq!(found(&query), [2], "a search without an ID too");
+        query.language = Some("en".to_owned());
+        assert!(found(&query).is_empty());
+    }
 }
