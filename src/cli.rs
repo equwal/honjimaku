@@ -43,6 +43,7 @@ commands:
   names    <path>   Adds English names and other names from a JSON file.
                     Use --dry-run to print the changes without writing them.
                     Stop the server first, or restart it after.
+                    Like each command, it first updates an old database.
 
 options:
   -h, --help   Prints this help output

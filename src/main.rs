@@ -458,7 +458,7 @@ async fn run(command: jimaku::Command) -> anyhow::Result<()> {
                 .await?;
             println!("{summary}");
             if dry_run {
-                println!("Dry run: nothing was written to the database.");
+                println!("Dry run: no names were written.");
             } else if summary.entries_changed > 0 {
                 println!("The server caches the entries. Restart the server if it is running.");
             }

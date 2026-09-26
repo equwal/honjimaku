@@ -7,6 +7,13 @@ use serde::Deserialize;
 
 use crate::{database::Table, models::DirectoryEntry};
 
+/// The largest size in bytes of the other names of an entry, as the column stores them.
+/// The edit form has the same limit.
+pub const MAX_OTHER_NAMES_LENGTH: usize = 4096;
+
+/// The largest size in bytes of an English name. The edit form has the same limit.
+const MAX_ENGLISH_NAME_LENGTH: usize = 1024;
+
 /// Returns true if the two names are the same when case is ignored.
 fn same_name(a: &str, b: &str) -> bool {
     a.trim().to_lowercase() == b.trim().to_lowercase()
@@ -84,30 +91,46 @@ pub enum Outcome {
 ///
 /// An English name is only set if the entry has none. It is never replaced.
 /// Other names are added after the current ones.
+/// The limits of the edit form apply, so that the edit form can still save the entry.
 pub fn change(entry: &DirectoryEntry, record: &NameRecord) -> Outcome {
     if entry.name != record.name {
         return Outcome::NameChanged;
     }
 
     let has_english = entry.english_name.as_deref().is_some_and(|s| !s.trim().is_empty());
-    let english_name = match record.english_name.as_deref().map(str::trim) {
-        Some(name) if !has_english && !name.is_empty() => Some(name.to_owned()),
-        _ => None,
-    };
+    // The English name is one line on the edit form, so a line break becomes a space.
+    let english_name = record
+        .english_name
+        .as_deref()
+        .map(|name| name.replace(['\r', '\n'], " ").trim().to_owned())
+        .filter(|name| !has_english && !name.is_empty() && name.len() <= MAX_ENGLISH_NAME_LENGTH);
 
     let mut skip = vec![entry.name.as_str()];
     skip.extend(english_name.as_deref().or(entry.english_name.as_deref()));
     skip.extend(entry.japanese_name.as_deref());
     skip.extend(entry.other_names.iter().map(String::as_str));
-    let new_names = normalize(record.other_names.iter().map(String::as_str), &skip);
+    // The column holds one name on each line, so a name with a line break is split as the
+    // column is read. Else the name comes back as two names, and the next import adds it again.
+    let new_names = normalize(
+        record.other_names.iter().flat_map(|name| name.split(['\r', '\n'])),
+        &skip,
+    );
 
-    if english_name.is_none() && new_names.is_empty() {
+    let mut other_names = entry.other_names.clone();
+    let mut added = 0;
+    for name in new_names {
+        // The size of the column text after the name is added, with one line break per name.
+        let length = other_names.iter().map(|n| n.len() + 1).sum::<usize>() + name.len();
+        if length <= MAX_OTHER_NAMES_LENGTH {
+            other_names.push(name);
+            added += 1;
+        }
+    }
+
+    if english_name.is_none() && added == 0 {
         return Outcome::Unchanged;
     }
 
-    let added = new_names.len();
-    let mut other_names = entry.other_names.clone();
-    other_names.extend(new_names);
     Outcome::Changed {
         english_name,
         other_names,
@@ -350,6 +373,64 @@ mod tests {
         entry.english_name = english_name;
         entry.other_names = other_names;
         assert_eq!(change(&entry, &record), Outcome::Unchanged);
+    }
+
+    /// The column holds one name on each line. An imported name with a line break must be
+    /// split the same way, or the next import adds it again and the entry name gets in.
+    #[test]
+    fn change_splits_a_name_with_a_line_break() {
+        let mut entry = entry("Sousou no Frieren");
+        let record = record(
+            "Sousou no Frieren",
+            Some("Frieren:\r\nBeyond Journey's End"),
+            &["Frieren\nSousou no Frieren", "Sousou\rno Frieren"],
+        );
+        let outcome = change(&entry, &record);
+        assert_eq!(
+            outcome,
+            Outcome::Changed {
+                english_name: Some("Frieren:  Beyond Journey's End".to_owned()),
+                other_names: vec!["Frieren".to_owned(), "Sousou".to_owned(), "no Frieren".to_owned()],
+                added: 3
+            }
+        );
+        let Outcome::Changed {
+            english_name,
+            other_names,
+            ..
+        } = outcome
+        else {
+            unreachable!()
+        };
+        entry.english_name = english_name;
+        // The names as a read of the column gives them back.
+        entry.other_names = parse(&join(&other_names).unwrap(), &[]);
+        assert_eq!(change(&entry, &record), Outcome::Unchanged);
+    }
+
+    /// The edit form refuses more than 4096 bytes of other names and more than 1024 bytes of
+    /// English name. The import keeps to the same limits, so that the form can still save the entry.
+    #[test]
+    fn change_keeps_the_limits_of_the_edit_form() {
+        let mut entry = entry("a");
+        entry.other_names = vec!["x".repeat(4000)];
+        let long_english = "e".repeat(MAX_ENGLISH_NAME_LENGTH + 1);
+        let some_fit = record("a", Some(&long_english), &[&"y".repeat(100), "short", "z"]);
+        let Outcome::Changed {
+            english_name,
+            other_names,
+            added,
+        } = change(&entry, &some_fit)
+        else {
+            panic!("the short names must be added");
+        };
+        assert_eq!(english_name, None);
+        assert_eq!(added, 2);
+        assert_eq!(other_names[1..], ["short", "z"]);
+        assert!(join(&other_names).unwrap().len() <= MAX_OTHER_NAMES_LENGTH);
+
+        let full = record("a", Some(&long_english), &[&"y".repeat(100)]);
+        assert_eq!(change(&entry, &full), Outcome::Unchanged);
     }
 
     #[test]

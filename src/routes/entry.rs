@@ -439,7 +439,7 @@ impl EditDirectoryEntry {
             errors.push("Japanese name cannot be more than 1024 bytes.");
         }
 
-        if is_over_length(&self.other_names, 4096) {
+        if is_over_length(&self.other_names, names::MAX_OTHER_NAMES_LENGTH) {
             errors.push("Other names cannot be more than 4096 bytes.");
         }
 
