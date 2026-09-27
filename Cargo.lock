@@ -59,7 +59,7 @@ dependencies = [
 [[package]]
 name = "anitomy"
 version = "0.1.0"
-source = "git+https://github.com/Rapptz/anitomy-rs/#c5271be1d9fe71a49e93e98ac3f982b38e6e27b6"
+source = "git+https://github.com/equwal/anitomy-rs/?rev=4eaa71df5d76f8baf77336a989408fc7374b0bd2#4eaa71df5d76f8baf77336a989408fc7374b0bd2"
 dependencies = [
  "phf 0.11.2",
  "regex",

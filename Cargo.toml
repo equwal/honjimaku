@@ -12,7 +12,9 @@ proptest = { version = "1", default-features = false, features = ["std"] }
 quick-xml = "0.41"
 
 [dependencies]
-anitomy = { git = "https://github.com/Rapptz/anitomy-rs/", version = "0.1.0" }
+# The fork reads the range of years in "Tokyo.2019-2020.S03E25" as part of the title, not
+# as the episodes 2019 and 2020. Go back to Rapptz/anitomy-rs when it has that change.
+anitomy = { git = "https://github.com/equwal/anitomy-rs/", rev = "4eaa71df5d76f8baf77336a989408fc7374b0bd2" }
 anyhow = "1.0.80"
 argon2 = { version = "0.5.3", features = ["std"] }
 askama = { version = "0.14", features = ["serde_json"] }
