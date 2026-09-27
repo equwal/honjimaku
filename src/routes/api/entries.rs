@@ -303,9 +303,16 @@ pub struct CreatePayload {
     bangumi_id: Option<u32>,
     /// Create an entry with the given Romaji name.
     ///
-    /// This is only available for API keys bound to editor users.
+    /// This is only available for API keys bound to editor users, with two exceptions.
+    /// On a site for books, each user may give the title of a book. On a site with a
+    /// release search, each user may give the name of a show that has no AniList or TMDB
+    /// page: the entry is made when enough releases name the show, and it is unverified.
     #[serde(default)]
     name: Option<String>,
+    /// What a show that has no AniList or TMDB page is: `anime` or `drama` (live action).
+    /// Without it, such a show is live action.
+    #[serde(default)]
+    kind: Option<Kind>,
     /// Create an entry with the given Japanese name.
     ///
     /// This is only available for API keys bound to editor users.
@@ -354,8 +361,13 @@ pub struct CreateEntryResult {
 /// On a site for books, an AniList ID makes an anime and a TMDB ID a live action
 /// show, in `language`. Without either, the entry is a book.
 ///
+/// On a site with a release search, a show that has no AniList or TMDB page can be made
+/// from `name` and `kind`. The site searches the names of video releases (the names that
+/// debrid services find videos by). Enough releases, of enough age, must name the show.
+/// The entry is unverified until an editor looks at it.
+///
 /// Note that only API keys bound to editor users can use
-/// fields other than `tmdb_id` and `anilist_id`.
+/// fields other than `tmdb_id` and `anilist_id`, except as said above.
 #[utoipa::path(
     post,
     path = "/api/entries",
@@ -383,10 +395,17 @@ pub async fn create_entry(
     let anilist_id = payload.anilist_id;
     let tmdb_id = payload.tmdb_id;
     let book_site = state.config().book_site;
-    // On a site for books each user may name a new book. A show takes its name from AniList
-    // or TMDB, as on jimaku.cc. The other fields stay with editors.
-    let may_name = account.flags.is_editor() || (book_site && anilist_id.is_none() && tmdb_id.is_none());
-    if !account.flags.is_editor()
+    let is_editor = account.flags.is_editor();
+    // A show without a page, which the release check looks for by its name.
+    let show_kind = payload.kind.filter(|kind| *kind != Kind::Book);
+    let no_page = anilist_id.is_none() && tmdb_id.is_none() && payload.bangumi_id.is_none();
+    // On a site for books each user may name a new book. On a site with a release search each
+    // user may name a show without a page. Other shows take their name from AniList or TMDB,
+    // as on jimaku.cc. The other fields stay with editors.
+    let may_name = is_editor
+        || (book_site && anilist_id.is_none() && tmdb_id.is_none() && show_kind.is_none())
+        || (no_page && state.config().release_index.is_some());
+    if !is_editor
         && ((payload.name.is_some() && !may_name)
             || payload.japanese_name.is_some()
             || payload.english_name.is_some()
@@ -395,7 +414,7 @@ pub async fn create_entry(
         return Err(ApiError::forbidden());
     }
 
-    if book_site && anilist_id.is_none() && tmdb_id.is_none() && payload.flags.is_none() {
+    if book_site && anilist_id.is_none() && tmdb_id.is_none() && payload.flags.is_none() && show_kind.is_none() {
         if let Some(name) = &payload.name {
             let title = crate::book::clean_title(name).map_err(ApiError::new)?;
             let key = crate::book::title_key(&title);
@@ -429,21 +448,23 @@ pub async fn create_entry(
         }
     }
 
-    let flags = if payload.flags.is_none() && payload.name.is_some() {
-        let mut flags = EntryFlags::new();
-        flags.set_anime(anilist_id.is_some());
-        Some(flags)
-    } else {
-        payload.flags
-    };
-    let titles = if let Some(name) = &payload.name {
-        Some(MediaTitle {
-            romaji: name.clone(),
-            english: payload.english_name,
-            native: payload.japanese_name,
-        })
-    } else {
-        None
+    let anime = anilist_id.is_some() || show_kind == Some(Kind::Anime);
+    // An editor names the entry. The name of any other user goes to the release check.
+    let (flags, titles) = match &payload.name {
+        Some(name) if is_editor => {
+            let flags = payload.flags.or_else(|| {
+                let mut flags = EntryFlags::new();
+                flags.set_anime(anime);
+                Some(flags)
+            });
+            let titles = MediaTitle {
+                romaji: name.clone(),
+                english: payload.english_name,
+                native: payload.japanese_name,
+            };
+            (flags, Some(titles))
+        }
+        _ => (payload.flags, None),
     };
 
     // On a site for books an AniList ID makes an anime and a TMDB ID a live action show, in
@@ -451,6 +472,7 @@ pub async fn create_entry(
     let kind = match (book_site, anilist_id, tmdb_id) {
         (true, Some(_), _) => Some(Kind::Anime),
         (true, None, Some(_)) => Some(Kind::Drama),
+        (true, None, None) => show_kind,
         _ => None,
     };
     let site_language = state.config().default_language().to_owned();
@@ -462,13 +484,14 @@ pub async fn create_entry(
     };
     let bangumi_id = payload.bangumi_id;
     let pending = PendingDirectoryEntry {
-        anime: anilist_id.is_some(),
+        anime,
         anilist_id,
         tmdb_id,
         bangumi_id,
         titles,
         flags,
         kind,
+        name: payload.name.clone().filter(|_| !is_editor),
         language: Some(language.clone()),
         ..Default::default()
     };

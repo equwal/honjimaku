@@ -9,7 +9,6 @@ rust-version = "1.92"
 [dev-dependencies]
 divan = "0.1.14"
 proptest = { version = "1", default-features = false, features = ["std"] }
-quick-xml = "0.41"
 
 [dependencies]
 # The fork reads the range of years in "Tokyo.2019-2020.S03E25" as part of the title, not
@@ -38,6 +37,8 @@ matroska = "0.30.1"
 percent-encoding = "2.3.1"
 pin-project-lite = "0.2.13"
 quick_cache = "0.4.1"
+# The release check reads RSS feeds. The standard library has no XML reader.
+quick-xml = "0.41"
 rawzip = "0.5"
 regex = "1.10.3"
 reqwest = { version = "0.13", default-features = false, features = ["stream", "multipart", "json", "query", "rustls"] }

@@ -7,7 +7,7 @@ use std::{
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
-use crate::{cli::PROGRAM_NAME, discord::Webhook, mirror::Mirror};
+use crate::{cli::PROGRAM_NAME, discord::Webhook, mirror::Mirror, release::ReleaseIndex};
 use crate::{gofile::Gofile, key::SecretKey};
 
 /// The server configuration.
@@ -81,6 +81,12 @@ pub struct Config {
     /// See `mirror`.
     #[serde(default)]
     pub mirrors: Vec<Mirror>,
+    /// A search of video release names, the names that debrid services find videos by:
+    /// `{"url": "https://nyaa.si/?page=rss&c=0_0&f=0&q={query}"}`. With it, each user may add
+    /// a show that has no AniList or TMDB page when releases name the show, and each upload
+    /// gets a note about the episodes that no release names. See `release`.
+    #[serde(default)]
+    pub release_index: Option<ReleaseIndex>,
     /// The secret key used for all crypto related functionality in the server.
     ///
     /// Microbenching makes it evident that cloning this without an Arc is around ~4x faster.
@@ -134,6 +140,7 @@ impl Config {
             buzzheavier: None,
             gofile: None,
             mirrors: Vec::new(),
+            release_index: None,
             server: ServerConfig::default(),
             secret_key: SecretKey::random()?,
         })

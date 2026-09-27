@@ -45,6 +45,9 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
       <ul>
         <li><a href="#naming-scheme">Naming Scheme</a></li>
         <li><a href="#creating-folders">Creating Folders</a></li>
+        {%- if crate::CONFIG.get().unwrap().release_index.is_some() %}
+        <li><a href="#release-check">Release Check</a></li>
+        {%- endif %}
         <li><a href="#file-types">Supported File Types</a></li>
         <li><a href="#archives">Archives</a></li>
         <li><a href="#ai-files">AI Generated Files</a></li>
@@ -103,7 +106,16 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   </ol>
   <p>An anime or a live action show goes in the <b>Anime</b> or the <b>Live Action</b> tab of its language, as on
     jimaku.cc. Give the AniList page of the anime, or the TMDB page of the show or the film. The site takes the names
-    from there, so the entry is verified at once. Only an editor may add a show without such a page.</p>
+    from there, so the entry is verified at once. Only an editor may add a show without such a page{% if crate::CONFIG.get().unwrap().release_index.is_some() %},
+    or the <a href="#release-check">release check</a>{% endif %}.</p>
+  {%- if crate::CONFIG.get().unwrap().release_index.is_some() %}
+  <p id="release-check">Release check: for a show without an AniList or TMDB page, give its name as video releases
+    write it. The site searches the names of video releases: the names that debrid services find videos by. When enough
+    releases name the show, and the first of them is some days old, the site adds the show. The entry stays
+    "unverified" until an editor looks at it. Each uploaded subtitle file of a show is also compared with the
+    releases of the show. A file for an episode that no release names gets a note after the upload. The site keeps no
+    link to a release, and it downloads nothing.</p>
+  {%- endif %}
   <p>subread.space can send the file here by itself: generate an API key on your <a href="/account">account page</a> and
     paste it there once.</p>
   <p>Subtitles hold the words of the book. Share them only if you may.</p>
@@ -278,6 +290,20 @@ Help · {{ crate::CONFIG.get().unwrap().site_name }}
   <p>
     Users that are editors can create a folder without this requirement, and this requirement is also relaxed for entries created from Kitsunekko.
   </p>
+  {%- if crate::CONFIG.get().unwrap().release_index.is_some() %}
+  <h2 id="release-check">Release Check</h2>
+  <p>
+    Some shows have no AniList or TMDB page, but video releases of them exist. For such a show, give its name as the
+    releases write it. The site searches the names of video releases: the names that debrid services find videos by.
+    When enough releases name the show, and the first of them is some days old, the site adds the show. The entry stays
+    "unverified" until an editor looks at it, because anybody can publish a release with any name.
+  </p>
+  <p>
+    The site also compares each uploaded subtitle file of a show with the releases of the show. A file for an episode
+    that no release names gets a note after the upload. Make sure that the season and the episode in its name are
+    correct. The site keeps no link to a release, and it downloads nothing.
+  </p>
+  {%- endif %}
   <h2 id="file-types">Supported File Types</h2>
   <p>
     The following file types are supported:
