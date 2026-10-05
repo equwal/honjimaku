@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__OGTITLE__</title>
+
+<!-- Discord, Slack and the rest read Open Graph. These are filled in by the
+     relay from the room's own state, so a pasted link previews the actual
+     stream rather than a generic page. theme-color is what Discord uses for
+     the stripe down the side of the embed. -->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Subrep">
+<meta property="og:title" content="__OGTITLE__">
+<meta property="og:description" content="__OGDESC__">
+<meta property="og:url" content="__OGURL__">
+<meta name="theme-color" content="#DE8A2C">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="__OGTITLE__">
+<meta name="twitter:description" content="__OGDESC__">
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root {
+    --bg: #0e1116; --panel: #161a21; --line: #252b36;
+    --fg: #edf1f7; --dim: #8b95a7; --accent: #7dd3fc;
+    --size: 28px;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  /* iOS Safari makes text larger in landscape unless told not to. */
+  html { -webkit-text-size-adjust: 100%; }
+  a { color: var(--accent); }
+  body {
+    background: var(--bg); color: var(--fg);
+    display: flex; flex-direction: column;
+    font-family: "Inter", "Segoe UI", "Yu Gothic UI", "Meiryo",
+                 "Noto Sans CJK JP", "Noto Sans", system-ui, sans-serif;
+  }
+  header {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel);
+    border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  header .grow { flex: 1; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+         margin-right: 7px; background: #6b7280; }
+  .dot.live { background: #4ade80; box-shadow: 0 0 7px #4ade80; }
+  .dot.off  { background: #ef4444; }
+  .meta { color: var(--dim); }
+  button {
+    font: inherit; font-size: 13px; color: var(--fg); cursor: pointer;
+    background: #1f2531; border: 1px solid var(--line);
+    border-radius: 6px; padding: 6px 11px;
+  }
+  button:hover { background: #29313f; }
+  button.on { background: var(--accent); border-color: var(--accent); color: #06202c; }
+
+  /* The mining surface: real, selectable text nodes for Yomitan. */
+  #log {
+    flex: 1; overflow-y: auto; padding: 22px 26px 40vh;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .line {
+    font-size: var(--size); line-height: 1.75; max-width: 34em;
+    padding: 6px 10px; border-radius: 6px;
+    border-left: 3px solid transparent;
+    user-select: text; -webkit-user-select: text;
+  }
+  .line:hover { background: #151a22; border-left-color: var(--line); }
+  .line.partial { color: var(--dim); border-left-color: #fbbf24; }
+  .line::before {
+    content: attr(data-time);
+    display: block; font-size: 11px; color: var(--dim);
+    margin-bottom: 2px; user-select: none;
+    font-variant-numeric: tabular-nums;
+  }
+  .empty { color: var(--dim); font-size: 15px; padding: 8px 10px; line-height: 1.6; }
+  .banner {
+    background: #2a1f10; border: 1px solid #6b4a15; color: #fbd38d;
+    padding: 10px 14px; border-radius: 8px; margin: 16px 26px 0; font-size: 14px;
+  }
+  /* The link to AnkiMobile after each caption, on iOS and iPadOS only. */
+  .anki {
+    margin-left: .6em; padding: 2px 8px; font-size: 13px; white-space: nowrap;
+    border: 1px solid var(--line); border-radius: 6px; text-decoration: none;
+    vertical-align: middle; user-select: none; -webkit-user-select: none;
+  }
+  .note {
+    display: flex; gap: 10px; align-items: center;
+    background: var(--panel); border: 1px solid var(--line); color: var(--dim);
+    padding: 8px 12px; border-radius: 8px; margin: 12px 26px 0; font-size: 14px;
+  }
+  .note span { flex: 1; }
+  /* A phone: less space at the sides, larger places to tap. */
+  @media (max-width: 600px) {
+    header { padding: 8px 12px; }
+    #log { padding: 14px 12px 40vh; }
+    .banner, .note { margin: 12px 12px 0; }
+  }
+  @media (pointer: coarse) {
+    button { padding: 9px 13px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <span id="state"><span class="dot"></span>connecting…</span>
+  <span class="meta" id="meta"></span>
+  <span class="grow"></span>
+  <a class="meta" href="https://honjimaku.com/subrep/" target="_blank" rel="noopener">Get Subrep</a>
+  <button id="smaller" title="Smaller text">A-</button>
+  <button id="bigger" title="Larger text">A+</button>
+  <button id="follow" class="on">Follow</button>
+</header>
+
+<div id="log"><div class="empty">Waiting for the stream…<br>
+  Make captions like these with
+  <a href="https://honjimaku.com/subrep/" target="_blank" rel="noopener">Subrep for Windows</a> or
+  <a href="https://github.com/equwal/subrep-android/releases/latest" target="_blank" rel="noopener">Subrep for Android</a>.
+</div></div>
+
+<script>
+// An AnkiMobile link that adds one caption as a note
+// (https://docs.ankimobile.net/url-schemes.html). A field is HTML, so the
+// text is escaped. encodeURIComponent writes a space as %20: AnkiMobile does
+// not read "+" as a space. The page address can name another note type, deck
+// or field: ?anki_type=...&anki_deck=...&anki_front=...&anki_back=...
+function ankiLink(text, meta, q) {
+  const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;").replace(/\r?\n/g, "<br>");
+  const get = (key, fallback) => (q && q.get(key)) || fallback;
+  const parts = [
+    ["type", get("anki_type", "Basic")],
+    ["deck", get("anki_deck", "Default")],
+    ["fld" + get("anki_front", "Front"), esc(text)],
+    ["fld" + get("anki_back", "Back"), esc(meta)],
+    ["tags", "subrep"],
+  ];
+  return "anki://x-callback-url/addnote?" + parts
+    .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v)).join("&");
+}
+</script>
+<script>
+(function () {
+  const ROOM = "__ROOM__";
+  const q = new URLSearchParams(location.search);
+
+  // Derived from where this page is actually mounted, so the same file works
+  // at the root or under a subdirectory like /subrep/w/<room>. Assuming "/"
+  // would break every deployment that is not at a domain root.
+  function wsUrl() {
+    if (q.get("ws")) return q.get("ws").replace(/\/$/, "") + "/sub/" + ROOM;
+    const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+    const base = location.pathname.replace(/\/w\/[^/]*\/?$/, "");
+    return scheme + "//" + location.host + base + "/sub/" + ROOM;
+  }
+
+  const log = document.getElementById("log");
+  const stateEl = document.getElementById("state");
+  const metaEl = document.getElementById("meta");
+  let follow = true;
+  let partialEl = null;
+  let size = matchMedia("(max-width: 600px)").matches ? 22 : 28;
+  // iPadOS says that it is a Mac: a Mac with a touch screen is an iPad.
+  const IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  try {
+    const saved = parseInt(localStorage.getItem("subrep.watch.size"), 10);
+    if (saved) size = saved;
+  } catch (e) {}
+  document.documentElement.style.setProperty("--size", size + "px");
+
+  function applySize(d) {
+    size = Math.max(14, Math.min(64, size + d));
+    document.documentElement.style.setProperty("--size", size + "px");
+    try { localStorage.setItem("subrep.watch.size", String(size)); } catch (e) {}
+  }
+
+  function atBottom() {
+    return log.scrollHeight - log.scrollTop - log.clientHeight < 80;
+  }
+  function scrollDown() { log.scrollTop = log.scrollHeight; }
+
+  function stamp(ts) {
+    const d = ts ? new Date(ts * 1000) : new Date();
+    return d.toTimeString().slice(0, 8);
+  }
+
+  function clearEmpty() {
+    const e = log.querySelector(".empty");
+    if (e) e.remove();
+  }
+
+  function ankiButton(m) {
+    const a = document.createElement("a");
+    a.className = "anki";
+    a.textContent = "+ Anki";
+    const meta = [metaEl.textContent, stamp(m.ts)].filter(Boolean).join(" · ");
+    a.href = ankiLink(m.text, meta, q);
+    return a;
+  }
+
+  function makeLine(m, isPartial) {
+    const div = document.createElement("div");
+    div.className = "line" + (isPartial ? " partial" : "");
+    div.dataset.time = stamp(m.ts) + (isPartial ? " · …" : "");
+    // Bare text node: what Yomitan reads.
+    div.appendChild(document.createTextNode(m.text));
+    if (IOS && !isPartial) div.appendChild(ankiButton(m));
+    return div;
+  }
+
+  // There is no iPhone app yet. Say so once, with the waitlist.
+  function iosNote() {
+    try { if (localStorage.getItem("subrep.watch.ios-note")) return; } catch (e) {}
+    const note = document.createElement("div");
+    note.className = "note";
+    const text = document.createElement("span");
+    text.append("No iPhone app yet. ");
+    const link = document.createElement("a");
+    link.href = "https://subread.space/subrep.html#ios";
+    link.target = "_blank";
+    link.rel = "noopener";
+    link.textContent = "Tell me when it ships";
+    text.append(link);
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "Close";
+    close.onclick = () => {
+      note.remove();
+      try { localStorage.setItem("subrep.watch.ios-note", "1"); } catch (e) {}
+    };
+    note.append(text, close);
+    document.body.insertBefore(note, log);
+  }
+
+  function onFinal(m) {
+    clearEmpty();
+    if (partialEl) { partialEl.remove(); partialEl = null; }
+    const wasBottom = atBottom();
+    log.appendChild(makeLine(m, false));
+    while (log.children.length > 400) log.removeChild(log.firstChild);
+    if (follow && wasBottom) scrollDown();
+  }
+
+  function onPartial(m) {
+    clearEmpty();
+    const wasBottom = atBottom();
+    if (partialEl) {
+      // Update in place; recreating it would kill a Yomitan popup mid-hover.
+      const node = [...partialEl.childNodes].find(n => n.nodeType === 3);
+      if (node) node.textContent = m.text;
+      partialEl.dataset.time = stamp(m.ts) + " · …";
+    } else {
+      partialEl = makeLine(m, true);
+      log.appendChild(partialEl);
+    }
+    if (follow && wasBottom) scrollDown();
+  }
+
+  function setState(live, detail) {
+    stateEl.innerHTML = "";
+    const dot = document.createElement("span");
+    dot.className = "dot " + (live ? "live" : "off");
+    stateEl.appendChild(dot);
+    stateEl.appendChild(document.createTextNode(detail));
+  }
+
+  function banner(text) {
+    if (document.querySelector(".banner")) return;
+    const d = document.createElement("div");
+    d.className = "banner";
+    d.textContent = text;
+    document.body.insertBefore(d, log);
+  }
+
+  document.getElementById("bigger").onclick = () => applySize(3);
+  document.getElementById("smaller").onclick = () => applySize(-3);
+  document.getElementById("follow").onclick = (e) => {
+    follow = !follow;
+    e.target.className = follow ? "on" : "";
+    if (follow) scrollDown();
+  };
+
+  function connect() {
+    let ws;
+    try { ws = new WebSocket(wsUrl()); }
+    catch (e) { setState(false, "bad address"); return; }
+
+    ws.onopen = () => setState(true, "connected");
+    ws.onclose = () => {
+      setState(false, "disconnected, retrying");
+      setTimeout(connect, 2000);
+    };
+    ws.onerror = () => ws.close();
+    ws.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+
+      if (m.type === "hello") {
+        setState(m.live, m.live ? "live" : "not broadcasting");
+        metaEl.textContent = [m.title, m.lang].filter(Boolean).join(" · ");
+      } else if (m.type === "status") {
+        setState(m.live, m.live ? "live" : "the host stopped broadcasting");
+        if (m.lang || m.title) {
+          metaEl.textContent = [m.title, m.lang].filter(Boolean).join(" · ");
+        }
+      } else if (m.type === "gone") {
+        setState(false, "that stream has ended");
+        banner(m.error || "This stream has ended.");
+      } else if (m.type === "final") {
+        onFinal(m);
+      } else if (m.type === "partial") {
+        onPartial(m);
+      } else if (m.type === "clear") {
+        if (partialEl) { partialEl.remove(); partialEl = null; }
+      }
+    };
+  }
+
+  if (IOS) iosNote();
+  connect();
+})();
+</script>
+</body>
+</html>
